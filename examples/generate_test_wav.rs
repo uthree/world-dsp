@@ -47,5 +47,8 @@ fn main() {
         writer.write_sample(val).unwrap();
     }
     writer.finalize().unwrap();
-    eprintln!("Generated: {} ({:.0}Hz, {:.1}s, {}Hz)", output, freq, duration, fs);
+    eprintln!(
+        "Generated: {} ({:.0}Hz, {:.1}s, {}Hz)",
+        output, freq, duration, fs
+    );
 }

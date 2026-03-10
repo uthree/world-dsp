@@ -48,9 +48,8 @@ pub fn harvest(x: &[f64], fs: i32, option: &HarvestOption) -> (Vec<f64>, Vec<f64
         };
         let y_length = y.len();
 
-        let fft_size = get_suitable_fft_size(
-            (actual_fs as f64 / CUTOFF + 1.0) as usize * 4 + y_length,
-        );
+        let fft_size =
+            get_suitable_fft_size((actual_fs as f64 / CUTOFF + 1.0) as usize * 4 + y_length);
 
         let y_spectrum = get_spectrum_for_estimation(&y, y_length, actual_fs, fft_size);
 
@@ -72,8 +71,7 @@ pub fn harvest(x: &[f64], fs: i32, option: &HarvestOption) -> (Vec<f64>, Vec<f64
 
                 let filtered_signal =
                     get_filtered_signal(half_avg_len, fft_size, &y_spectrum, y_length);
-                let zero_crossings =
-                    get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
+                let zero_crossings = get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
 
                 let mut candidates = vec![0.0; f0_length];
                 let mut scores = vec![0.0; f0_length];
@@ -277,9 +275,9 @@ fn get_four_zero_crossing_intervals(filtered_signal: &[f64], actual_fs: i32) -> 
         positive_interval_locations: pos_locs,
         positive_intervals: pos_intervals,
         peak_interval_locations: peak_locs,
-        peak_intervals: peak_intervals,
+        peak_intervals,
         dip_interval_locations: dip_locs,
-        dip_intervals: dip_intervals,
+        dip_intervals,
     }
 }
 
@@ -489,7 +487,7 @@ fn override_f0_near_steps(f0: &mut [f64], f0_length: usize) {
         if f0[i - 1] != 0.0 && f0[i + 1] != 0.0 {
             let mean = (f0[i - 1] + f0[i + 1]) / 2.0;
             let ratio = f0[i] / mean;
-            if ratio < 0.5 || ratio > 2.0 {
+            if !(0.5..=2.0).contains(&ratio) {
                 f0[i] = 0.0;
             }
         }

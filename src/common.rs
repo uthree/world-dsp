@@ -66,8 +66,7 @@ pub fn nuttall_window(n: usize) -> Vec<f64> {
     let mut y = vec![0.0; n];
     for i in 0..n {
         let tmp = i as f64 / (n as f64 - 1.0);
-        y[i] = 0.355768 - 0.487396 * (2.0 * PI * tmp).cos()
-            + 0.144232 * (4.0 * PI * tmp).cos()
+        y[i] = 0.355768 - 0.487396 * (2.0 * PI * tmp).cos() + 0.144232 * (4.0 * PI * tmp).cos()
             - 0.012604 * (6.0 * PI * tmp).cos();
     }
     y
@@ -142,8 +141,7 @@ fn set_parameters_for_linear_smoothing(
         mirroring_spectrum[i] = power_spectrum[i - boundary];
     }
     for i in fft_size / 2 + boundary..=fft_size / 2 + boundary * 2 {
-        mirroring_spectrum[i] =
-            power_spectrum[fft_size / 2 - (i - (fft_size / 2 + boundary))];
+        mirroring_spectrum[i] = power_spectrum[fft_size / 2 - (i - (fft_size / 2 + boundary))];
     }
 
     mirroring_segment[0] = mirroring_spectrum[0] * fs as f64 / fft_size as f64;
@@ -211,10 +209,7 @@ pub fn linear_smoothing(input: &[f64], width: f64, fs: i32, fft_size: usize, out
 ///
 /// 入力: log_spectrum[0..=fft_size/2] に対数パワースペクトルが入っている
 /// 出力: minimum_phase_spectrum[0..=fft_size/2]
-pub fn get_minimum_phase_spectrum(
-    log_spectrum: &[f64],
-    fft_size: usize,
-) -> Vec<Complex64> {
+pub fn get_minimum_phase_spectrum(log_spectrum: &[f64], fft_size: usize) -> Vec<Complex64> {
     let mut planner = FftPlanner::new();
 
     // ミラーリング
@@ -229,10 +224,7 @@ pub fn get_minimum_phase_spectrum(
     // r2c FFT をシミュレート: 実数データを複素数に変換して FFT
     // C++版では r2c FFT を使って cepstrum を計算し、符号反転で IFFT をシミュレートしている
     let fft_forward = planner.plan_fft_forward(fft_size);
-    let mut cepstrum: Vec<Complex64> = mirrored
-        .iter()
-        .map(|&v| Complex64::new(v, 0.0))
-        .collect();
+    let mut cepstrum: Vec<Complex64> = mirrored.iter().map(|&v| Complex64::new(v, 0.0)).collect();
     fft_forward.process(&mut cepstrum);
 
     // 因果律窓: 正のケフレンシーを2倍、負のケフレンシーをゼロ

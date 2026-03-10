@@ -1,6 +1,6 @@
 use ndarray::Array2;
-use rand::Rng;
 use ndarray_rand::rand_distr::StandardNormal;
+use rand::Rng;
 use rayon::prelude::*;
 
 use crate::common::*;
@@ -68,12 +68,7 @@ fn get_windowed_waveform(
 }
 
 /// パワースペクトル計算（DC 補正付き）
-fn get_power_spectrum(
-    waveform: &mut Vec<f64>,
-    fs: i32,
-    f0: f64,
-    fft_size: usize,
-) -> Vec<f64> {
+fn get_power_spectrum(waveform: &mut Vec<f64>, fs: i32, f0: f64, fft_size: usize) -> Vec<f64> {
     let spectrum = forward_real_fft(waveform, fft_size);
 
     let mut power_spectrum = vec![0.0; fft_size / 2 + 1];
@@ -105,8 +100,7 @@ fn smoothing_with_recovery(
     for i in 1..=half {
         let quefrency = i as f64 / fs as f64;
         smoothing_lifter[i] = (PI * f0 * quefrency).sin() / (PI * f0 * quefrency);
-        compensation_lifter[i] =
-            (1.0 - 2.0 * q1) + 2.0 * q1 * (2.0 * PI * quefrency * f0).cos();
+        compensation_lifter[i] = (1.0 - 2.0 * q1) + 2.0 * q1 * (2.0 * PI * quefrency * f0).cos();
     }
 
     // log(power_spectrum) を取って対称化
@@ -122,7 +116,8 @@ fn smoothing_with_recovery(
     let spectrum = forward_real_fft(&log_spectrum, fft_size);
 
     // リフタ適用
-    let mut filtered: Vec<num_complex::Complex64> = vec![num_complex::Complex64::new(0.0, 0.0); fft_size / 2 + 1];
+    let mut filtered: Vec<num_complex::Complex64> =
+        vec![num_complex::Complex64::new(0.0, 0.0); fft_size / 2 + 1];
     for i in 0..=half {
         filtered[i] = num_complex::Complex64::new(
             spectrum[i].re * smoothing_lifter[i] * compensation_lifter[i],
@@ -160,7 +155,13 @@ fn cheaptrick_general_body(
 
     // 線形平滑化
     let mut smoothed = vec![0.0; fft_size / 2 + 1];
-    linear_smoothing(&power_spectrum, current_f0 * 2.0 / 3.0, fs, fft_size, &mut smoothed);
+    linear_smoothing(
+        &power_spectrum,
+        current_f0 * 2.0 / 3.0,
+        fs,
+        fft_size,
+        &mut smoothed,
+    );
 
     // 微小ノイズ追加（ゼロ防止）
     for i in 0..=fft_size / 2 {
@@ -201,7 +202,13 @@ pub fn cheaptrick(
             let mut rng = rand::rng();
             let current_f0 = if f0[i] <= f0_floor { DEFAULT_F0 } else { f0[i] };
             cheaptrick_general_body(
-                x, fs, current_f0, fft_size, temporal_positions[i], option.q1, &mut rng,
+                x,
+                fs,
+                current_f0,
+                fft_size,
+                temporal_positions[i],
+                option.q1,
+                &mut rng,
             )
         })
         .collect();

@@ -25,7 +25,15 @@ pub fn yin(x: &[f64], fs: i32, option: &YinOption) -> (Vec<f64>, Vec<f64>) {
             if center + window_size >= x_len {
                 return 0.0;
             }
-            estimate_f0_yin(x, center, fs, tau_min, tau_max, window_size, option.threshold)
+            estimate_f0_yin(
+                x,
+                center,
+                fs,
+                tau_min,
+                tau_max,
+                window_size,
+                option.threshold,
+            )
         })
         .collect();
 
@@ -76,7 +84,7 @@ fn estimate_f0_yin(
         if cmndf[tau] < threshold {
             // この位置から局所最小値を探す
             let mut best = tau;
-            while best + 1 <= tau_max && cmndf[best + 1] < cmndf[best] {
+            while best < tau_max && cmndf[best + 1] < cmndf[best] {
                 best += 1;
             }
             tau_estimate = best;
@@ -204,7 +212,11 @@ mod tests {
                 .filter(|&&v| v > 0.0)
                 .copied()
                 .collect();
-            assert!(!voiced.is_empty(), "{}Hz: should have voiced frames", f0_true);
+            assert!(
+                !voiced.is_empty(),
+                "{}Hz: should have voiced frames",
+                f0_true
+            );
             for &v in &voiced {
                 assert!(
                     (v - f0_true).abs() < 10.0,

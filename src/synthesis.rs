@@ -69,7 +69,11 @@ fn get_pulse_locations_for_time_base(
         }
     }
 
-    (pulse_locations, pulse_locations_index, pulse_locations_time_shift)
+    (
+        pulse_locations,
+        pulse_locations_index,
+        pulse_locations_time_shift,
+    )
 }
 
 /// タイムベース計算
@@ -86,8 +90,18 @@ fn get_time_base(
     let mut interpolated_f0 = vec![0.0; y_length];
     let mut interpolated_vuv = vec![0.0; y_length];
 
-    interp1(&coarse_time_axis, &coarse_f0, &time_axis, &mut interpolated_f0);
-    interp1(&coarse_time_axis, &coarse_vuv, &time_axis, &mut interpolated_vuv);
+    interp1(
+        &coarse_time_axis,
+        &coarse_f0,
+        &time_axis,
+        &mut interpolated_f0,
+    );
+    interp1(
+        &coarse_time_axis,
+        &coarse_vuv,
+        &time_axis,
+        &mut interpolated_vuv,
+    );
 
     for i in 0..y_length {
         interpolated_vuv[i] = if interpolated_vuv[i] > 0.5 { 1.0 } else { 0.0 };
@@ -113,8 +127,7 @@ fn get_dc_remover(fft_size: usize) -> Vec<f64> {
     let mut dc_component = 0.0;
 
     for i in 0..fft_size / 2 {
-        dc_remover[i] =
-            0.5 - 0.5 * (2.0 * PI * (i as f64 + 1.0) / (1.0 + fft_size as f64)).cos();
+        dc_remover[i] = 0.5 - 0.5 * (2.0 * PI * (i as f64 + 1.0) / (1.0 + fft_size as f64)).cos();
         dc_remover[fft_size - i - 1] = dc_remover[i];
         dc_component += dc_remover[i] * 2.0;
     }
@@ -189,10 +202,7 @@ fn get_aperiodic_ratio(
 }
 
 /// ノイズスペクトル生成（ndarray-rand を使用）
-fn get_noise_spectrum(
-    noise_size: usize,
-    fft_size: usize,
-) -> Vec<num_complex::Complex64> {
+fn get_noise_spectrum(noise_size: usize, fft_size: usize) -> Vec<num_complex::Complex64> {
     let noise = Array1::random(noise_size, StandardNormal);
     let mean = noise.mean().unwrap_or(0.0);
 
@@ -340,20 +350,32 @@ fn get_one_frame_segment(
     fs: i32,
     dc_remover: &[f64],
 ) -> Vec<f64> {
-    let spectral_envelope = get_spectral_envelope(
-        current_time, frame_period, f0_length, spectrogram, fft_size,
-    );
+    let spectral_envelope =
+        get_spectral_envelope(current_time, frame_period, f0_length, spectrogram, fft_size);
     let aperiodic_ratio = get_aperiodic_ratio(
-        current_time, frame_period, f0_length, aperiodicity, fft_size,
+        current_time,
+        frame_period,
+        f0_length,
+        aperiodicity,
+        fft_size,
     );
 
     let periodic_response = get_periodic_response(
-        fft_size, &spectral_envelope, &aperiodic_ratio, current_vuv,
-        dc_remover, fractional_time_shift, fs,
+        fft_size,
+        &spectral_envelope,
+        &aperiodic_ratio,
+        current_vuv,
+        dc_remover,
+        fractional_time_shift,
+        fs,
     );
 
     let aperiodic_response = get_aperiodic_response(
-        noise_size, fft_size, &spectral_envelope, &aperiodic_ratio, current_vuv,
+        noise_size,
+        fft_size,
+        &spectral_envelope,
+        &aperiodic_ratio,
+        current_vuv,
     );
 
     let sqrt_noise_size = (noise_size as f64).sqrt();

@@ -21,7 +21,7 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
     }
 
     let half_window_length = (1.5 * fs as f64 / initial_f0 + 1.0) as usize;
-    let fft_size = get_suitable_fft_size((half_window_length * 2 + 1) as usize);
+    let fft_size = get_suitable_fft_size(((half_window_length * 2 + 1)));
 
     let base_index_raw = matlab_round(current_position * fs as f64);
     let base_index: Vec<i64> = (-(half_window_length as i64)..=half_window_length as i64)
@@ -61,24 +61,16 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
     let mut power_spectrum = vec![0.0; half_fft];
     let mut numerator_i = vec![0.0; half_fft];
     for i in 0..half_fft {
-        power_spectrum[i] = main_spectrum[i].re * main_spectrum[i].re
-            + main_spectrum[i].im * main_spectrum[i].im;
-        numerator_i[i] = main_spectrum[i].re * diff_spectrum[i].im
-            - main_spectrum[i].im * diff_spectrum[i].re;
+        power_spectrum[i] =
+            main_spectrum[i].re * main_spectrum[i].re + main_spectrum[i].im * main_spectrum[i].im;
+        numerator_i[i] =
+            main_spectrum[i].re * diff_spectrum[i].im - main_spectrum[i].im * diff_spectrum[i].re;
     }
 
     // 1回目: 2倍音で暫定F0
-    let tentative_f0 =
-        fix_f0(&power_spectrum, &numerator_i, fft_size, fs, initial_f0, 2);
+    let tentative_f0 = fix_f0(&power_spectrum, &numerator_i, fft_size, fs, initial_f0, 2);
     // 2回目: 6倍音で精密F0
-    let refined = fix_f0(
-        &power_spectrum,
-        &numerator_i,
-        fft_size,
-        fs,
-        tentative_f0,
-        6,
-    );
+    let refined = fix_f0(&power_spectrum, &numerator_i, fft_size, fs, tentative_f0, 6);
 
     // 補正量が 20% を超えたら元の f0 を維持
     if (refined - initial_f0).abs() / initial_f0 > 0.2 {
@@ -108,9 +100,8 @@ fn fix_f0(
         }
         amplitude_list[i] = power_spectrum[index].sqrt();
         if power_spectrum[index] > EPS {
-            instantaneous_frequency_list[i] = harmonic_freq
-                + numerator_i[index] / power_spectrum[index] * fs as f64
-                    / (2.0 * PI);
+            instantaneous_frequency_list[i] =
+                harmonic_freq + numerator_i[index] / power_spectrum[index] * fs as f64 / (2.0 * PI);
         }
     }
 

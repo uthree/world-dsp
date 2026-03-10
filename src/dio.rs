@@ -28,8 +28,8 @@ pub fn dio(x: &[f64], fs: i32, option: &DioOption) -> (Vec<f64>, Vec<f64>) {
     let y_length = y.len();
 
     // バンド数
-    let number_of_bands =
-        1 + (((option.f0_ceil / option.f0_floor) as f64).ln() / LOG2 * option.channels_in_octave)
+    let number_of_bands = 1
+        + (((option.f0_ceil / option.f0_floor)).ln() / LOG2 * option.channels_in_octave)
             as usize;
 
     // boundary F0 リスト
@@ -43,7 +43,8 @@ pub fn dio(x: &[f64], fs: i32, option: &DioOption) -> (Vec<f64>, Vec<f64>) {
     );
 
     // スペクトル計算（ローカットフィルタ適用済み）
-    let y_spectrum = get_spectrum_for_estimation(&y, y_length, actual_fs, fft_size, decimation_ratio);
+    let y_spectrum =
+        get_spectrum_for_estimation(&y, y_length, actual_fs, fft_size, decimation_ratio);
 
     // 各帯域の F0 候補とスコアを並列計算
     let band_results: Vec<(Vec<f64>, Vec<f64>)> = (0..number_of_bands)
@@ -52,8 +53,7 @@ pub fn dio(x: &[f64], fs: i32, option: &DioOption) -> (Vec<f64>, Vec<f64>) {
             let half_avg_len = matlab_round(actual_fs as f64 / boundary_f0_list[i] / 2.0) as usize;
             let filtered_signal =
                 get_filtered_signal(half_avg_len, fft_size, &y_spectrum, y_length);
-            let zero_crossings =
-                get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
+            let zero_crossings = get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
             let mut candidates = vec![0.0; f0_length];
             let mut scores = vec![0.0; f0_length];
             get_f0_candidate_contour(
@@ -102,11 +102,7 @@ fn get_decimation_ratio(speed: i32, fs: i32) -> i32 {
     }
     let ratio = speed.min(12);
     // 確認: actual_fs が妥当か
-    if fs / ratio < 100 {
-        1
-    } else {
-        ratio
-    }
+    if fs / ratio < 100 { 1 } else { ratio }
 }
 
 /// ローカットフィルタを適用したスペクトルを取得
@@ -249,9 +245,9 @@ fn get_four_zero_crossing_intervals(filtered_signal: &[f64], actual_fs: i32) -> 
         positive_interval_locations: pos_locs,
         positive_intervals: pos_intervals,
         peak_interval_locations: peak_locs,
-        peak_intervals: peak_intervals,
+        peak_intervals,
         dip_interval_locations: dip_locs,
-        dip_intervals: dip_intervals,
+        dip_intervals,
     }
 }
 
@@ -534,12 +530,11 @@ fn select_best_f0(
             continue;
         }
         let ratio = candidate / reference_f0;
-        if ratio >= 1.0 - allowed_range && ratio <= 1.0 + allowed_range {
-            if f0_scores[j][index] < best_score {
+        if ratio >= 1.0 - allowed_range && ratio <= 1.0 + allowed_range
+            && f0_scores[j][index] < best_score {
                 best_score = f0_scores[j][index];
                 best_f0 = candidate;
             }
-        }
     }
 
     best_f0
