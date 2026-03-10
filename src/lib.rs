@@ -1,14 +1,11 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+pub mod cheaptrick;
+pub mod common;
+pub mod constant;
+pub mod d4c;
+pub mod matlab;
+pub mod synthesis;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use cheaptrick::cheaptrick;
+pub use constant::{CheapTrickOption, D4COption};
+pub use d4c::d4c;
+pub use synthesis::synthesis;
