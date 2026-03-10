@@ -122,6 +122,32 @@ impl Default for HarvestOption {
     }
 }
 
+/// YIN のオプション構造体
+#[derive(Debug, Clone)]
+pub struct YinOption {
+    pub f0_floor: f64,
+    pub f0_ceil: f64,
+    pub frame_period: f64,
+    pub threshold: f64,
+}
+
+impl YinOption {
+    pub fn new() -> Self {
+        YinOption {
+            f0_floor: DEFAULT_F0_FLOOR,
+            f0_ceil: DEFAULT_F0_CEIL,
+            frame_period: DEFAULT_FRAME_PERIOD,
+            threshold: 0.1,
+        }
+    }
+}
+
+impl Default for YinOption {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// DIO 用のフレーム数を計算
 pub fn get_samples_for_dio(fs: i32, x_length: usize, frame_period: f64) -> usize {
     (1000.0 * x_length as f64 / fs as f64 / frame_period) as usize + 1
