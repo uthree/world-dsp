@@ -1,17 +1,19 @@
 use ndarray::Array2;
+use rand::Rng;
+use ndarray_rand::rand_distr::StandardNormal;
 
 use crate::common::*;
 use crate::constant::*;
 use crate::matlab::*;
 
-/// F0 適応窓で波形を切り出し、forward_real_fft バッファに格納
+/// F0 適応窓で波形を切り出し
 fn get_windowed_waveform(
     x: &[f64],
     fs: i32,
     current_f0: f64,
     current_position: f64,
     fft_size: usize,
-    randn_state: &mut RandnState,
+    rng: &mut impl Rng,
 ) -> Vec<f64> {
     let half_window_length = matlab_round(1.5 * fs as f64 / current_f0) as usize;
     let window_length = half_window_length * 2 + 1;
@@ -45,7 +47,8 @@ fn get_windowed_waveform(
     // F0 適応窓掛け
     let mut waveform = vec![0.0; fft_size];
     for i in 0..window_length {
-        waveform[i] = x[safe_index[i]] * window[i] + randn(randn_state) * SAFE_GUARD_MINIMUM;
+        waveform[i] = x[safe_index[i]] * window[i]
+            + rng.sample::<f64, _>(StandardNormal) * SAFE_GUARD_MINIMUM;
     }
 
     // DC 成分除去
@@ -146,10 +149,10 @@ fn cheaptrick_general_body(
     fft_size: usize,
     current_position: f64,
     q1: f64,
-    randn_state: &mut RandnState,
+    rng: &mut impl Rng,
 ) -> Vec<f64> {
     // F0 適応窓掛け
-    let mut waveform = get_windowed_waveform(x, fs, current_f0, current_position, fft_size, randn_state);
+    let mut waveform = get_windowed_waveform(x, fs, current_f0, current_position, fft_size, rng);
 
     // パワースペクトル計算（DC 補正付き）
     let power_spectrum = get_power_spectrum(&mut waveform, fs, current_f0, fft_size);
@@ -160,7 +163,7 @@ fn cheaptrick_general_body(
 
     // 微小ノイズ追加（ゼロ防止）
     for i in 0..=fft_size / 2 {
-        smoothed[i] += randn(randn_state).abs() * EPS;
+        smoothed[i] += rng.sample::<f64, _>(StandardNormal).abs() * EPS;
     }
 
     // ケプストラム平滑化と復元
@@ -189,7 +192,7 @@ pub fn cheaptrick(
     let fft_size = option.fft_size;
     let f0_floor = get_f0_floor_for_cheaptrick(fs, fft_size);
 
-    let mut randn_state = RandnState::new();
+    let mut rng = rand::rng();
 
     let spec_len = fft_size / 2 + 1;
     let mut spectrogram = Array2::zeros((f0_length, spec_len));
@@ -204,7 +207,7 @@ pub fn cheaptrick(
             fft_size,
             temporal_positions[i],
             option.q1,
-            &mut randn_state,
+            &mut rng,
         );
 
         for j in 0..spec_len {

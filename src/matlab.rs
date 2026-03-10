@@ -1,51 +1,5 @@
 use ndarray::Array1;
 
-/// xorshift ベースの疑似乱数生成器の状態
-#[derive(Debug, Clone)]
-pub struct RandnState {
-    pub x: u32,
-    pub y: u32,
-    pub z: u32,
-    pub w: u32,
-}
-
-impl RandnState {
-    pub fn new() -> Self {
-        RandnState {
-            x: 123456789,
-            y: 362436069,
-            z: 521288629,
-            w: 88675123,
-        }
-    }
-}
-
-impl Default for RandnState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// xorshift ベースの正規乱数生成（C++版 WORLD 互換）
-pub fn randn(state: &mut RandnState) -> f64 {
-    let mut t = state.x ^ (state.x << 11);
-    state.x = state.y;
-    state.y = state.z;
-    state.z = state.w;
-    state.w = (state.w ^ (state.w >> 19)) ^ (t ^ (t >> 8));
-
-    let mut tmp = state.w >> 4;
-    for _ in 0..11 {
-        t = state.x ^ (state.x << 11);
-        state.x = state.y;
-        state.y = state.z;
-        state.z = state.w;
-        state.w = (state.w ^ (state.w >> 19)) ^ (t ^ (t >> 8));
-        tmp = tmp.wrapping_add(state.w >> 4);
-    }
-    tmp as f64 / 268435456.0 - 6.0
-}
-
 /// MATLAB 互換丸め
 pub fn matlab_round(x: f64) -> i32 {
     if x > 0.0 {

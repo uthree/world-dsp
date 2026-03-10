@@ -1,4 +1,6 @@
 use ndarray::Array2;
+use rand::Rng;
+use ndarray_rand::rand_distr::StandardNormal;
 
 use crate::common::*;
 use crate::constant::*;
@@ -13,7 +15,7 @@ fn get_windowed_waveform_d4c(
     window_type: i32,
     window_length_ratio: f64,
     fft_size: usize,
-    randn_state: &mut RandnState,
+    rng: &mut impl Rng,
 ) -> Vec<f64> {
     let half_window_length =
         matlab_round(window_length_ratio * fs as f64 / current_f0 / 2.0) as usize;
@@ -52,7 +54,8 @@ fn get_windowed_waveform_d4c(
     // F0 適応窓掛け
     let mut waveform = vec![0.0; fft_size];
     for i in 0..window_length {
-        waveform[i] = x[safe_index[i]] * window[i] + randn(randn_state) * SAFE_GUARD_D4C;
+        waveform[i] = x[safe_index[i]] * window[i]
+            + rng.sample::<f64, _>(StandardNormal) * SAFE_GUARD_D4C;
     }
 
     // DC 成分除去
@@ -77,17 +80,10 @@ fn get_centroid(
     current_f0: f64,
     fft_size: usize,
     current_position: f64,
-    randn_state: &mut RandnState,
+    rng: &mut impl Rng,
 ) -> Vec<f64> {
     let mut waveform = get_windowed_waveform_d4c(
-        x,
-        fs,
-        current_f0,
-        current_position,
-        BLACKMAN,
-        4.0,
-        fft_size,
-        randn_state,
+        x, fs, current_f0, current_position, BLACKMAN, 4.0, fft_size, rng,
     );
 
     let waveform_len = matlab_round(2.0 * fs as f64 / current_f0) as usize * 2 + 1;
@@ -125,23 +121,15 @@ fn get_static_centroid(
     current_f0: f64,
     fft_size: usize,
     current_position: f64,
-    randn_state: &mut RandnState,
+    rng: &mut impl Rng,
 ) -> Vec<f64> {
     let centroid1 = get_centroid(
-        x,
-        fs,
-        current_f0,
-        fft_size,
-        current_position - 0.25 / current_f0,
-        randn_state,
+        x, fs, current_f0, fft_size,
+        current_position - 0.25 / current_f0, rng,
     );
     let centroid2 = get_centroid(
-        x,
-        fs,
-        current_f0,
-        fft_size,
-        current_position + 0.25 / current_f0,
-        randn_state,
+        x, fs, current_f0, fft_size,
+        current_position + 0.25 / current_f0, rng,
     );
 
     let mut static_centroid = vec![0.0; fft_size / 2 + 1];
@@ -160,17 +148,10 @@ fn get_smoothed_power_spectrum(
     current_f0: f64,
     fft_size: usize,
     current_position: f64,
-    randn_state: &mut RandnState,
+    rng: &mut impl Rng,
 ) -> Vec<f64> {
     let waveform = get_windowed_waveform_d4c(
-        x,
-        fs,
-        current_f0,
-        current_position,
-        HANNING,
-        4.0,
-        fft_size,
-        randn_state,
+        x, fs, current_f0, current_position, HANNING, 4.0, fft_size, rng,
     );
 
     let spectrum = forward_real_fft(&waveform, fft_size);
@@ -270,7 +251,7 @@ fn d4c_love_train(
     fs: i32,
     f0: &[f64],
     temporal_positions: &[f64],
-    randn_state: &mut RandnState,
+    rng: &mut impl Rng,
 ) -> Vec<f64> {
     let lowest_f0 = 40.0;
     let fft_size = (2.0_f64)
@@ -292,22 +273,12 @@ fn d4c_love_train(
 
         let current_f0 = f0[i].max(lowest_f0);
         let waveform = get_windowed_waveform_d4c(
-            x,
-            fs,
-            current_f0,
-            temporal_positions[i],
-            BLACKMAN,
-            3.0,
-            fft_size,
-            randn_state,
+            x, fs, current_f0, temporal_positions[i], BLACKMAN, 3.0, fft_size, rng,
         );
 
         let spectrum = forward_real_fft(&waveform, fft_size);
 
         let mut power_spectrum = vec![0.0; fft_size / 2 + 1];
-        for j in 0..=boundary0 {
-            power_spectrum[j] = 0.0;
-        }
         for j in boundary0 + 1..=fft_size / 2 {
             power_spectrum[j] = spectrum[j].re * spectrum[j].re + spectrum[j].im * spectrum[j].im;
         }
@@ -333,19 +304,14 @@ fn d4c_general_body(
     number_of_aperiodicities: usize,
     window: &[f64],
     window_length: usize,
-    randn_state: &mut RandnState,
+    rng: &mut impl Rng,
 ) -> Vec<f64> {
-    let static_centroid = get_static_centroid(x, fs, current_f0, fft_size, current_position, randn_state);
-    let smoothed_power = get_smoothed_power_spectrum(x, fs, current_f0, fft_size, current_position, randn_state);
+    let static_centroid = get_static_centroid(x, fs, current_f0, fft_size, current_position, rng);
+    let smoothed_power = get_smoothed_power_spectrum(x, fs, current_f0, fft_size, current_position, rng);
     let static_group_delay = get_static_group_delay(&static_centroid, &smoothed_power, fs, current_f0, fft_size);
 
     let mut coarse_aperiodicity = get_coarse_aperiodicity(
-        &static_group_delay,
-        fs,
-        fft_size,
-        number_of_aperiodicities,
-        window,
-        window_length,
+        &static_group_delay, fs, fft_size, number_of_aperiodicities, window, window_length,
     );
 
     // F0 ベースの補正
@@ -379,7 +345,7 @@ pub fn d4c(
     let f0_length = f0.len();
     let spec_len = fft_size / 2 + 1;
 
-    let mut randn_state = RandnState::new();
+    let mut rng = rand::rng();
 
     // 初期値: 1.0 - SAFE_GUARD_MINIMUM
     let mut aperiodicity = Array2::from_elem((f0_length, spec_len), 1.0 - SAFE_GUARD_MINIMUM);
@@ -397,7 +363,7 @@ pub fn d4c(
     let window = nuttall_window(window_length);
 
     // D4C LoveTrain
-    let aperiodicity0 = d4c_love_train(x, fs, f0, temporal_positions, &mut randn_state);
+    let aperiodicity0 = d4c_love_train(x, fs, f0, temporal_positions, &mut rng);
 
     // 粗い周波数軸
     let mut coarse_frequency_axis = vec![0.0; number_of_aperiodicities + 2];
@@ -418,15 +384,8 @@ pub fn d4c(
         let current_f0 = f0[i].max(FLOOR_F0_D4C);
 
         let coarse_ap = d4c_general_body(
-            x,
-            fs,
-            current_f0,
-            fft_size_d4c,
-            temporal_positions[i],
-            number_of_aperiodicities,
-            &window,
-            window_length,
-            &mut randn_state,
+            x, fs, current_f0, fft_size_d4c, temporal_positions[i],
+            number_of_aperiodicities, &window, window_length, &mut rng,
         );
 
         // coarse_aperiodicity の構築: [-60, coarse_ap..., -SAFE_GUARD_MINIMUM]
@@ -440,10 +399,7 @@ pub fn d4c(
         // 線形補間
         let mut ap_interp = vec![0.0; spec_len];
         interp1(
-            &coarse_frequency_axis,
-            &full_coarse,
-            &frequency_axis,
-            &mut ap_interp,
+            &coarse_frequency_axis, &full_coarse, &frequency_axis, &mut ap_interp,
         );
 
         // dB → リニア変換

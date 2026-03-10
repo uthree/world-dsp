@@ -1,4 +1,6 @@
 use ndarray::{Array1, Array2};
+use ndarray_rand::RandomExt;
+use ndarray_rand::rand_distr::StandardNormal;
 
 use crate::common::*;
 use crate::constant::*;
@@ -185,21 +187,17 @@ fn get_aperiodic_ratio(
     aperiodic_spectrum
 }
 
-/// ノイズスペクトル生成
+/// ノイズスペクトル生成（ndarray-rand を使用）
 fn get_noise_spectrum(
     noise_size: usize,
     fft_size: usize,
-    randn_state: &mut RandnState,
 ) -> Vec<num_complex::Complex64> {
+    let noise = Array1::random(noise_size, StandardNormal);
+    let mean = noise.mean().unwrap_or(0.0);
+
     let mut waveform = vec![0.0; fft_size];
-    let mut average = 0.0;
-    for i in 0..noise_size {
-        waveform[i] = randn(randn_state);
-        average += waveform[i];
-    }
-    average /= noise_size as f64;
-    for i in 0..noise_size {
-        waveform[i] -= average;
+    for (i, &v) in noise.iter().enumerate() {
+        waveform[i] = v - mean;
     }
 
     forward_real_fft(&waveform, fft_size)
@@ -263,8 +261,8 @@ fn get_periodic_response(
 
     let min_phase = get_minimum_phase_spectrum(&log_spectrum, fft_size);
 
-    // IFFT 用スペクトルにコピー
-    let mut inv_spectrum: Vec<num_complex::Complex64> = vec![num_complex::Complex64::new(0.0, 0.0); fft_size / 2 + 1];
+    let mut inv_spectrum: Vec<num_complex::Complex64> =
+        vec![num_complex::Complex64::new(0.0, 0.0); fft_size / 2 + 1];
     for i in 0..=fft_size / 2 {
         inv_spectrum[i] = min_phase[i];
     }
@@ -283,7 +281,6 @@ fn get_periodic_response(
     let mut periodic_response = vec![0.0; fft_size];
     remove_dc_component(&shifted, fft_size, dc_remover, &mut periodic_response);
 
-    // shifted に periodic_response を加算
     for i in 0..fft_size {
         periodic_response[i] += shifted[i];
     }
@@ -298,9 +295,8 @@ fn get_aperiodic_response(
     spectrum: &[f64],
     aperiodic_ratio: &[f64],
     current_vuv: f64,
-    randn_state: &mut RandnState,
 ) -> Vec<f64> {
-    let noise_spectrum = get_noise_spectrum(noise_size, fft_size, randn_state);
+    let noise_spectrum = get_noise_spectrum(noise_size, fft_size);
 
     let mut log_spectrum = vec![0.0; fft_size / 2 + 1];
     if current_vuv != 0.0 {
@@ -315,8 +311,8 @@ fn get_aperiodic_response(
 
     let min_phase = get_minimum_phase_spectrum(&log_spectrum, fft_size);
 
-    // 最小位相スペクトル × ノイズスペクトル
-    let mut inv_spectrum: Vec<num_complex::Complex64> = vec![num_complex::Complex64::new(0.0, 0.0); fft_size / 2 + 1];
+    let mut inv_spectrum: Vec<num_complex::Complex64> =
+        vec![num_complex::Complex64::new(0.0, 0.0); fft_size / 2 + 1];
     for i in 0..=fft_size / 2 {
         inv_spectrum[i] = min_phase[i] * noise_spectrum[i];
     }
@@ -342,40 +338,21 @@ fn get_one_frame_segment(
     fractional_time_shift: f64,
     fs: i32,
     dc_remover: &[f64],
-    randn_state: &mut RandnState,
 ) -> Vec<f64> {
     let spectral_envelope = get_spectral_envelope(
-        current_time,
-        frame_period,
-        f0_length,
-        spectrogram,
-        fft_size,
+        current_time, frame_period, f0_length, spectrogram, fft_size,
     );
     let aperiodic_ratio = get_aperiodic_ratio(
-        current_time,
-        frame_period,
-        f0_length,
-        aperiodicity,
-        fft_size,
+        current_time, frame_period, f0_length, aperiodicity, fft_size,
     );
 
     let periodic_response = get_periodic_response(
-        fft_size,
-        &spectral_envelope,
-        &aperiodic_ratio,
-        current_vuv,
-        dc_remover,
-        fractional_time_shift,
-        fs,
+        fft_size, &spectral_envelope, &aperiodic_ratio, current_vuv,
+        dc_remover, fractional_time_shift, fs,
     );
 
     let aperiodic_response = get_aperiodic_response(
-        noise_size,
-        fft_size,
-        &spectral_envelope,
-        &aperiodic_ratio,
-        current_vuv,
-        randn_state,
+        noise_size, fft_size, &spectral_envelope, &aperiodic_ratio, current_vuv,
     );
 
     let sqrt_noise_size = (noise_size as f64).sqrt();
@@ -415,8 +392,6 @@ pub fn synthesis(
     let y_length = ((f0_length as f64 - 1.0) * frame_period_sec * fs as f64) as usize + 1;
     let mut y = vec![0.0; y_length];
 
-    let mut randn_state = RandnState::new();
-
     let lowest_f0 = fs as f64 / fft_size as f64 + 1.0;
 
     let (pulse_locations, pulse_locations_index, pulse_locations_time_shift, interpolated_vuv) =
@@ -429,12 +404,10 @@ pub fn synthesis(
     for i in 0..number_of_pulses {
         let noise_size = if i + 1 < number_of_pulses {
             pulse_locations_index[i + 1] - pulse_locations_index[i]
+        } else if i > 0 {
+            pulse_locations_index[i] - pulse_locations_index[i - 1]
         } else {
-            if i > 0 {
-                pulse_locations_index[i] - pulse_locations_index[i - 1]
-            } else {
-                1
-            }
+            1
         };
         let noise_size = noise_size.max(1);
 
@@ -450,7 +423,6 @@ pub fn synthesis(
             pulse_locations_time_shift[i],
             fs,
             &dc_remover,
-            &mut randn_state,
         );
 
         let offset = pulse_locations_index[i] as i64 - fft_size as i64 / 2 + 1;
