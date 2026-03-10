@@ -235,21 +235,21 @@ pub fn get_minimum_phase_spectrum(
         .collect();
     fft_forward.process(&mut cepstrum);
 
-    // C++版の inverse_fft トリック: r2c の結果の虚部を反転して IFFT 相当にする
-    cepstrum[0] = Complex64::new(cepstrum[0].re, -cepstrum[0].im);
+    // 因果律窓: 正のケフレンシーを2倍、負のケフレンシーをゼロ
+    // cepstrum[0] はそのまま
     for i in 1..fft_size / 2 {
-        cepstrum[i] = Complex64::new(cepstrum[i].re * 2.0, -cepstrum[i].im * 2.0);
+        cepstrum[i] = Complex64::new(cepstrum[i].re * 2.0, cepstrum[i].im * 2.0);
     }
-    cepstrum[fft_size / 2] = Complex64::new(cepstrum[fft_size / 2].re, -cepstrum[fft_size / 2].im);
+    // cepstrum[fft_size/2] はそのまま
     for i in fft_size / 2 + 1..fft_size {
         cepstrum[i] = Complex64::new(0.0, 0.0);
     }
 
-    // forward FFT
-    let fft_forward2 = planner.plan_fft_forward(fft_size);
-    fft_forward2.process(&mut cepstrum);
+    // inverse FFT（非正規化）
+    let fft_inverse = planner.plan_fft_inverse(fft_size);
+    fft_inverse.process(&mut cepstrum);
 
-    // exp(x/fft_size)
+    // exp(x/fft_size) で正規化 + 指数変換
     let mut result = vec![Complex64::new(0.0, 0.0); fft_size / 2 + 1];
     for i in 0..=fft_size / 2 {
         let tmp = (cepstrum[i].re / fft_size as f64).exp();

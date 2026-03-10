@@ -125,7 +125,7 @@ fn smoothing_with_recovery(
     let mut filtered: Vec<num_complex::Complex64> = vec![num_complex::Complex64::new(0.0, 0.0); fft_size / 2 + 1];
     for i in 0..=half {
         filtered[i] = num_complex::Complex64::new(
-            spectrum[i].re * smoothing_lifter[i] * compensation_lifter[i] / fft_size as f64,
+            spectrum[i].re * smoothing_lifter[i] * compensation_lifter[i],
             0.0,
         );
     }
