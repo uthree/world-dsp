@@ -217,29 +217,28 @@ pub fn fast_fftfilt(x: &[f64], h: &[f64], fft_size: usize) -> Array1<f64> {
     // x の FFT
     let mut x_buf: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); fft_size];
     for (i, &val) in x.iter().enumerate() {
-        x_buf[i] = Complex64::new(val / fft_size as f64, 0.0);
+        x_buf[i] = Complex64::new(val, 0.0);
     }
     fft_forward.process(&mut x_buf);
-
-    let x_spectrum = x_buf.clone();
 
     // h の FFT
     let mut h_buf: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); fft_size];
     for (i, &val) in h.iter().enumerate() {
-        h_buf[i] = Complex64::new(val / fft_size as f64, 0.0);
+        h_buf[i] = Complex64::new(val, 0.0);
     }
     fft_forward.process(&mut h_buf);
 
     // 乗算
     let mut product: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); fft_size];
     for i in 0..fft_size {
-        product[i] = x_spectrum[i] * h_buf[i];
+        product[i] = x_buf[i] * h_buf[i];
     }
 
-    // IFFT
+    // IFFT + 正規化 (rustfft は非正規化なので 1/N が必要)
     fft_inverse.process(&mut product);
+    let inv_n = 1.0 / fft_size as f64;
 
-    Array1::from_vec(product.iter().map(|c| c.re).collect())
+    Array1::from_vec(product.iter().map(|c| c.re * inv_n).collect())
 }
 
 /// 標準偏差（MATLAB 互換, N-1 で正規化）
