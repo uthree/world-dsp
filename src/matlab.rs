@@ -192,12 +192,12 @@ pub fn decimate(x: &[f64], r: i32) -> Vec<f64> {
 
     let r = r as usize;
     let nout = (x_length - 1) / r + 1;
-    let nbeg = r - r * nout + x_length;
+    let nbeg = x_length + r - r * nout;
 
     let mut y = vec![0.0; nout];
     let mut count = 0;
     let mut i = nbeg;
-    while i < x_length + n_fact {
+    while i < x_length + n_fact && count < nout {
         y[count] = tmp1[i + n_fact - 1];
         count += 1;
         i += r;
