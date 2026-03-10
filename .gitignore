@@ -1,3 +1,4 @@
 /target
 .claude
 ./*.wav
+.DS_Store

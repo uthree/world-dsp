@@ -359,8 +359,7 @@ fn get_one_frame_segment(
     let sqrt_noise_size = (noise_size as f64).sqrt();
     let mut response = vec![0.0; fft_size];
     for i in 0..fft_size {
-        response[i] =
-            (periodic_response[i] * sqrt_noise_size + aperiodic_response[i]) / fft_size as f64;
+        response[i] = periodic_response[i] * sqrt_noise_size + aperiodic_response[i];
     }
 
     response
