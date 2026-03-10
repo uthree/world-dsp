@@ -10,3 +10,6 @@ num-complex = "0.4"
 rand = "0.9"
 ndarray-rand = "0.16"
 rayon = "1.10"
+
+[dev-dependencies]
+hound = "3.5"
