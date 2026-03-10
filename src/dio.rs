@@ -3,7 +3,7 @@ use rayon::prelude::*;
 
 use crate::common::{forward_real_fft, inverse_real_fft, nuttall_window};
 use crate::constant::*;
-use crate::matlab::{decimate, diff, interp1};
+use crate::matlab::{decimate, diff, interp1, matlab_round};
 
 /// DIO ピッチ推定
 ///
@@ -49,7 +49,7 @@ pub fn dio(x: &[f64], fs: i32, option: &DioOption) -> (Vec<f64>, Vec<f64>) {
     let band_results: Vec<(Vec<f64>, Vec<f64>)> = (0..number_of_bands)
         .into_par_iter()
         .map(|i| {
-            let half_avg_len = (actual_fs as f64 / boundary_f0_list[i] / 2.0 + 0.5) as usize;
+            let half_avg_len = matlab_round(actual_fs as f64 / boundary_f0_list[i] / 2.0) as usize;
             let filtered_signal =
                 get_filtered_signal(half_avg_len, fft_size, &y_spectrum, y_length);
             let zero_crossings =

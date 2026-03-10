@@ -3,7 +3,7 @@ use rayon::prelude::*;
 
 use crate::common::{forward_real_fft, inverse_real_fft, nuttall_window};
 use crate::constant::*;
-use crate::matlab::{decimate, diff, interp1};
+use crate::matlab::{decimate, diff, interp1, matlab_round};
 use crate::stonemask::get_refined_f0;
 
 /// Harvest ピッチ推定
@@ -176,7 +176,7 @@ fn get_spectrum_for_estimation(
 
 /// ローカットフィルタ設計
 fn design_low_cut_filter(actual_fs: i32, fft_size: usize) -> Vec<f64> {
-    let filter_length_half = (actual_fs as f64 / CUTOFF * 2.0) as usize;
+    let filter_length_half = matlab_round(actual_fs as f64 / CUTOFF * 2.0) as usize;
     let filter_length = 2 * filter_length_half + 1;
     let mut low_cut_filter = vec![0.0; fft_size];
 

@@ -40,13 +40,10 @@ fn main() {
         samples.len() as f64 / fs as f64
     );
 
-    // F0 推定（DIO + StoneMask）
-    eprintln!("Estimating F0 with DIO...");
-    let dio_option = DioOption::new();
-    let (temporal_positions, f0_raw) = dio(&samples, fs, &dio_option);
-
-    eprintln!("Refining F0 with StoneMask...");
-    let f0 = stonemask(&samples, fs, &temporal_positions, &f0_raw);
+    // F0 推定（Harvest）
+    eprintln!("Estimating F0 with Harvest...");
+    let harvest_option = HarvestOption::new();
+    let (temporal_positions, f0) = harvest(&samples, fs, &harvest_option);
 
     // スペクトル包絡推定（CheapTrick）
     eprintln!("Estimating spectral envelope with CheapTrick...");
@@ -57,7 +54,14 @@ fn main() {
     // 非周期性推定（D4C）
     eprintln!("Estimating aperiodicity with D4C...");
     let d4c_option = D4COption::new();
-    let aperiodicity = d4c(&samples, fs, &temporal_positions, &f0, fft_size, &d4c_option);
+    let aperiodicity = d4c(
+        &samples,
+        fs,
+        &temporal_positions,
+        &f0,
+        fft_size,
+        &d4c_option,
+    );
 
     // パラメータ加工
     let mut f0_modified = f0.clone();
@@ -65,15 +69,15 @@ fn main() {
 
     match mode.as_str() {
         "pitch" => {
-            let semitones: f64 = args
-                .get(4)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| {
-                    eprintln!("pitch mode requires semitone value (e.g., pitch 5)");
-                    process::exit(1);
-                });
+            let semitones: f64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                eprintln!("pitch mode requires semitone value (e.g., pitch 5)");
+                process::exit(1);
+            });
             let ratio = (2.0_f64).powf(semitones / 12.0);
-            eprintln!("Pitch shift: {:.1} semitones (ratio: {:.3})", semitones, ratio);
+            eprintln!(
+                "Pitch shift: {:.1} semitones (ratio: {:.3})",
+                semitones, ratio
+            );
             for v in f0_modified.iter_mut() {
                 if *v > 0.0 {
                     *v *= ratio;
@@ -95,13 +99,10 @@ fn main() {
             }
         }
         "gender" => {
-            let ratio: f64 = args
-                .get(4)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| {
-                    eprintln!("gender mode requires ratio (e.g., gender 0.8)");
-                    process::exit(1);
-                });
+            let ratio: f64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                eprintln!("gender mode requires ratio (e.g., gender 0.8)");
+                process::exit(1);
+            });
             eprintln!("Gender shift: spectral ratio {:.2}", ratio);
             let spec_len = fft_size / 2 + 1;
             let n_frames = f0_modified.len();
@@ -141,7 +142,7 @@ fn main() {
 
     // 合成
     eprintln!("Synthesizing...");
-    let frame_period = dio_option.frame_period;
+    let frame_period = harvest_option.frame_period;
     let y = synthesis(
         &f0_modified,
         &spectrogram_modified,

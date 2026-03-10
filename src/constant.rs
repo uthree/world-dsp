@@ -5,8 +5,8 @@ pub const DEFAULT_F0_CEIL: f64 = 800.0;
 pub const DEFAULT_F0: f64 = 500.0;
 pub const DEFAULT_FRAME_PERIOD: f64 = 5.0;
 pub const SAFE_GUARD_MINIMUM: f64 = 0.000_000_000_001; // 1e-12
-pub const EPS: f64 = 0.000_000_000_000_1; // 1e-13
-pub const SAFE_GUARD_D4C: f64 = 0.000_000_000_1; // 1e-10
+pub const EPS: f64 = 0.00000000000000022204460492503131; // f64::EPSILON
+pub const SAFE_GUARD_D4C: f64 = 0.000_001; // 1e-6
 pub const FLOOR_F0_D4C: f64 = 47.0;
 pub const THRESHOLD: f64 = 0.85;
 pub const FREQUENCY_INTERVAL: f64 = 3000.0;
@@ -58,9 +58,10 @@ impl Default for D4COption {
     }
 }
 
-/// CheapTrick 用の FFT サイズを計算
+/// CheapTrick 用の FFT サイズを計算（2のべき乗）
 pub fn get_fft_size_for_cheaptrick(fs: i32, f0_floor: f64) -> usize {
-    (2.0_f64).powf(1.0 + (3.0 * fs as f64 / f0_floor + 1.0).ln() / LOG2).floor() as usize
+    let log2_val = (3.0 * fs as f64 / f0_floor + 1.0).ln() / LOG2;
+    (2.0_f64).powi(1 + log2_val as i32) as usize
 }
 
 /// FFT サイズから CheapTrick の F0 下限を逆算

@@ -250,10 +250,12 @@ pub fn get_minimum_phase_spectrum(
     fft_inverse.process(&mut cepstrum);
 
     // exp(x/fft_size) で正規化 + 指数変換
+    // C++ は Forward FFT + 虚部反転で IFFT をシミュレートするため、
+    // 結果の虚部符号が Inverse FFT とは逆になる。位相を反転して合わせる。
     let mut result = vec![Complex64::new(0.0, 0.0); fft_size / 2 + 1];
     for i in 0..=fft_size / 2 {
         let tmp = (cepstrum[i].re / fft_size as f64).exp();
-        let phase = cepstrum[i].im / fft_size as f64;
+        let phase = -cepstrum[i].im / fft_size as f64;
         result[i] = Complex64::new(tmp * phase.cos(), tmp * phase.sin());
     }
 
