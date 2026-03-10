@@ -1,6 +1,7 @@
 use ndarray::Array2;
 use rand::Rng;
 use ndarray_rand::rand_distr::StandardNormal;
+use rayon::prelude::*;
 
 use crate::common::*;
 use crate::constant::*;
@@ -192,24 +193,21 @@ pub fn cheaptrick(
     let fft_size = option.fft_size;
     let f0_floor = get_f0_floor_for_cheaptrick(fs, fft_size);
 
-    let mut rng = rand::rng();
-
     let spec_len = fft_size / 2 + 1;
+
+    let envelopes: Vec<Vec<f64>> = (0..f0_length)
+        .into_par_iter()
+        .map(|i| {
+            let mut rng = rand::rng();
+            let current_f0 = if f0[i] <= f0_floor { DEFAULT_F0 } else { f0[i] };
+            cheaptrick_general_body(
+                x, fs, current_f0, fft_size, temporal_positions[i], option.q1, &mut rng,
+            )
+        })
+        .collect();
+
     let mut spectrogram = Array2::zeros((f0_length, spec_len));
-
-    for i in 0..f0_length {
-        let current_f0 = if f0[i] <= f0_floor { DEFAULT_F0 } else { f0[i] };
-
-        let envelope = cheaptrick_general_body(
-            x,
-            fs,
-            current_f0,
-            fft_size,
-            temporal_positions[i],
-            option.q1,
-            &mut rng,
-        );
-
+    for (i, envelope) in envelopes.iter().enumerate() {
         for j in 0..spec_len {
             spectrogram[[i, j]] = envelope[j];
         }

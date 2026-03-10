@@ -1,4 +1,5 @@
 use num_complex::Complex64;
+use rayon::prelude::*;
 
 use crate::common::{forward_real_fft, inverse_real_fft, nuttall_window};
 use crate::constant::*;
@@ -44,26 +45,32 @@ pub fn dio(x: &[f64], fs: i32, option: &DioOption) -> (Vec<f64>, Vec<f64>) {
     // スペクトル計算（ローカットフィルタ適用済み）
     let y_spectrum = get_spectrum_for_estimation(&y, y_length, actual_fs, fft_size, decimation_ratio);
 
-    // 各帯域の F0 候補とスコア
-    let mut f0_candidates = vec![vec![0.0; f0_length]; number_of_bands];
-    let mut f0_scores = vec![vec![0.0; f0_length]; number_of_bands];
+    // 各帯域の F0 候補とスコアを並列計算
+    let band_results: Vec<(Vec<f64>, Vec<f64>)> = (0..number_of_bands)
+        .into_par_iter()
+        .map(|i| {
+            let half_avg_len = (actual_fs as f64 / boundary_f0_list[i] / 2.0 + 0.5) as usize;
+            let filtered_signal =
+                get_filtered_signal(half_avg_len, fft_size, &y_spectrum, y_length);
+            let zero_crossings =
+                get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
+            let mut candidates = vec![0.0; f0_length];
+            let mut scores = vec![0.0; f0_length];
+            get_f0_candidate_contour(
+                &zero_crossings,
+                boundary_f0_list[i],
+                actual_fs as f64,
+                &temporal_positions,
+                f0_length,
+                &mut candidates,
+                &mut scores,
+            );
+            (candidates, scores)
+        })
+        .collect();
 
-    for i in 0..number_of_bands {
-        let half_avg_len = (actual_fs as f64 / boundary_f0_list[i] / 2.0 + 0.5) as usize;
-        let filtered_signal =
-            get_filtered_signal(half_avg_len, fft_size, &y_spectrum, y_length);
-        let zero_crossings =
-            get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
-        get_f0_candidate_contour(
-            &zero_crossings,
-            boundary_f0_list[i],
-            actual_fs as f64,
-            &temporal_positions,
-            f0_length,
-            &mut f0_candidates[i],
-            &mut f0_scores[i],
-        );
-    }
+    let f0_candidates: Vec<Vec<f64>> = band_results.iter().map(|(c, _)| c.clone()).collect();
+    let f0_scores: Vec<Vec<f64>> = band_results.iter().map(|(_, s)| s.clone()).collect();
 
     // 最良候補選択
     let mut best_f0 = get_best_f0_contour(&f0_candidates, &f0_scores, f0_length, number_of_bands);

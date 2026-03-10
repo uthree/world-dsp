@@ -1,6 +1,7 @@
 use ndarray::{Array1, Array2};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::StandardNormal;
+use rayon::prelude::*;
 
 use crate::common::*;
 use crate::constant::*;
@@ -401,37 +402,49 @@ pub fn synthesis(
 
     let number_of_pulses = pulse_locations.len();
 
+    // noise_size を事前計算
+    let noise_sizes: Vec<usize> = (0..number_of_pulses)
+        .map(|i| {
+            let ns = if i + 1 < number_of_pulses {
+                pulse_locations_index[i + 1] - pulse_locations_index[i]
+            } else if i > 0 {
+                pulse_locations_index[i] - pulse_locations_index[i - 1]
+            } else {
+                1
+            };
+            ns.max(1)
+        })
+        .collect();
+
+    // 各パルスのレスポンスを並列計算
+    let responses: Vec<Vec<f64>> = (0..number_of_pulses)
+        .into_par_iter()
+        .map(|i| {
+            get_one_frame_segment(
+                interpolated_vuv[pulse_locations_index[i]],
+                noise_sizes[i],
+                spectrogram,
+                fft_size,
+                aperiodicity,
+                f0_length,
+                frame_period_sec,
+                pulse_locations[i],
+                pulse_locations_time_shift[i],
+                fs,
+                &dc_remover,
+            )
+        })
+        .collect();
+
+    // 重複区間への加算は逐次処理
     for i in 0..number_of_pulses {
-        let noise_size = if i + 1 < number_of_pulses {
-            pulse_locations_index[i + 1] - pulse_locations_index[i]
-        } else if i > 0 {
-            pulse_locations_index[i] - pulse_locations_index[i - 1]
-        } else {
-            1
-        };
-        let noise_size = noise_size.max(1);
-
-        let response = get_one_frame_segment(
-            interpolated_vuv[pulse_locations_index[i]],
-            noise_size,
-            spectrogram,
-            fft_size,
-            aperiodicity,
-            f0_length,
-            frame_period_sec,
-            pulse_locations[i],
-            pulse_locations_time_shift[i],
-            fs,
-            &dc_remover,
-        );
-
         let offset = pulse_locations_index[i] as i64 - fft_size as i64 / 2 + 1;
         let lower_limit = if offset < 0 { (-offset) as usize } else { 0 };
         let upper_limit = fft_size.min((y_length as i64 - offset) as usize);
 
         for j in lower_limit..upper_limit {
             let index = (j as i64 + offset) as usize;
-            y[index] += response[j];
+            y[index] += responses[i][j];
         }
     }
 

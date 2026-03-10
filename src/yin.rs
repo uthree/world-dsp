@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 use crate::constant::*;
 
 /// YIN ピッチ推定
@@ -14,25 +16,18 @@ pub fn yin(x: &[f64], fs: i32, option: &YinOption) -> (Vec<f64>, Vec<f64>) {
     let tau_max = (fs as f64 / option.f0_floor).ceil() as usize;
     let tau_min = (fs as f64 / option.f0_ceil).floor() as usize;
     let window_size = tau_max * 2;
+    let x_len = x.len();
 
-    let mut f0 = vec![0.0; f0_length];
-
-    for i in 0..f0_length {
-        let center = (temporal_positions[i] * fs as f64) as usize;
-        if center + window_size >= x.len() {
-            break;
-        }
-
-        f0[i] = estimate_f0_yin(
-            x,
-            center,
-            fs,
-            tau_min,
-            tau_max,
-            window_size,
-            option.threshold,
-        );
-    }
+    let f0: Vec<f64> = (0..f0_length)
+        .into_par_iter()
+        .map(|i| {
+            let center = (temporal_positions[i] * fs as f64) as usize;
+            if center + window_size >= x_len {
+                return 0.0;
+            }
+            estimate_f0_yin(x, center, fs, tau_min, tau_max, window_size, option.threshold)
+        })
+        .collect();
 
     (temporal_positions, f0)
 }

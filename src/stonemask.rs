@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 use crate::common::{blackman_window, forward_real_fft};
 use crate::constant::*;
 use crate::matlab::matlab_round;
@@ -6,12 +8,10 @@ use crate::matlab::matlab_round;
 ///
 /// DIO や Harvest で得られた粗い F0 推定値を、スペクトル解析により精密化する。
 pub fn stonemask(x: &[f64], fs: i32, temporal_positions: &[f64], f0: &[f64]) -> Vec<f64> {
-    let f0_length = f0.len();
-    let mut refined_f0 = vec![0.0; f0_length];
-    for i in 0..f0_length {
-        refined_f0[i] = get_refined_f0(x, fs, temporal_positions[i], f0[i]);
-    }
-    refined_f0
+    (0..f0.len())
+        .into_par_iter()
+        .map(|i| get_refined_f0(x, fs, temporal_positions[i], f0[i]))
+        .collect()
 }
 
 /// 単一フレームの F0 リファインメント（Harvest からも呼ばれる）

@@ -1,6 +1,7 @@
 use ndarray::Array2;
 use rand::Rng;
 use ndarray_rand::rand_distr::StandardNormal;
+use rayon::prelude::*;
 
 use crate::common::*;
 use crate::constant::*;
@@ -251,7 +252,6 @@ fn d4c_love_train(
     fs: i32,
     f0: &[f64],
     temporal_positions: &[f64],
-    rng: &mut impl Rng,
 ) -> Vec<f64> {
     let lowest_f0 = 40.0;
     let fft_size = (2.0_f64)
@@ -263,35 +263,35 @@ fn d4c_love_train(
     let boundary2 = (7900.0 * fft_size as f64 / fs as f64).ceil() as usize;
 
     let f0_length = f0.len();
-    let mut aperiodicity0 = vec![0.0; f0_length];
 
-    for i in 0..f0_length {
-        if f0[i] == 0.0 {
-            aperiodicity0[i] = 0.0;
-            continue;
-        }
+    (0..f0_length)
+        .into_par_iter()
+        .map(|i| {
+            if f0[i] == 0.0 {
+                return 0.0;
+            }
 
-        let current_f0 = f0[i].max(lowest_f0);
-        let waveform = get_windowed_waveform_d4c(
-            x, fs, current_f0, temporal_positions[i], BLACKMAN, 3.0, fft_size, rng,
-        );
+            let mut rng = rand::rng();
+            let current_f0 = f0[i].max(lowest_f0);
+            let waveform = get_windowed_waveform_d4c(
+                x, fs, current_f0, temporal_positions[i], BLACKMAN, 3.0, fft_size, &mut rng,
+            );
 
-        let spectrum = forward_real_fft(&waveform, fft_size);
+            let spectrum = forward_real_fft(&waveform, fft_size);
 
-        let mut power_spectrum = vec![0.0; fft_size / 2 + 1];
-        for j in boundary0 + 1..=fft_size / 2 {
-            power_spectrum[j] = spectrum[j].re * spectrum[j].re + spectrum[j].im * spectrum[j].im;
-        }
+            let mut power_spectrum = vec![0.0; fft_size / 2 + 1];
+            for j in boundary0 + 1..=fft_size / 2 {
+                power_spectrum[j] =
+                    spectrum[j].re * spectrum[j].re + spectrum[j].im * spectrum[j].im;
+            }
 
-        // 累積和
-        for j in boundary0 + 1..=boundary2 {
-            power_spectrum[j] += power_spectrum[j - 1];
-        }
+            for j in boundary0 + 1..=boundary2 {
+                power_spectrum[j] += power_spectrum[j - 1];
+            }
 
-        aperiodicity0[i] = power_spectrum[boundary1] / power_spectrum[boundary2];
-    }
-
-    aperiodicity0
+            power_spectrum[boundary1] / power_spectrum[boundary2]
+        })
+        .collect()
 }
 
 /// D4C の1フレーム処理
@@ -345,8 +345,6 @@ pub fn d4c(
     let f0_length = f0.len();
     let spec_len = fft_size / 2 + 1;
 
-    let mut rng = rand::rng();
-
     // 初期値: 1.0 - SAFE_GUARD_MINIMUM
     let mut aperiodicity = Array2::from_elem((f0_length, spec_len), 1.0 - SAFE_GUARD_MINIMUM);
 
@@ -363,7 +361,7 @@ pub fn d4c(
     let window = nuttall_window(window_length);
 
     // D4C LoveTrain
-    let aperiodicity0 = d4c_love_train(x, fs, f0, temporal_positions, &mut rng);
+    let aperiodicity0 = d4c_love_train(x, fs, f0, temporal_positions);
 
     // 粗い周波数軸
     let mut coarse_frequency_axis = vec![0.0; number_of_aperiodicities + 2];
@@ -376,35 +374,46 @@ pub fn d4c(
         .map(|i| i as f64 * fs as f64 / fft_size as f64)
         .collect();
 
-    for i in 0..f0_length {
-        if f0[i] == 0.0 || aperiodicity0[i] <= option.threshold {
-            continue;
-        }
+    // 各フレームの非周期性を並列計算
+    let frame_results: Vec<Option<Vec<f64>>> = (0..f0_length)
+        .into_par_iter()
+        .map(|i| {
+            if f0[i] == 0.0 || aperiodicity0[i] <= option.threshold {
+                return None;
+            }
 
-        let current_f0 = f0[i].max(FLOOR_F0_D4C);
+            let mut rng = rand::rng();
+            let current_f0 = f0[i].max(FLOOR_F0_D4C);
 
-        let coarse_ap = d4c_general_body(
-            x, fs, current_f0, fft_size_d4c, temporal_positions[i],
-            number_of_aperiodicities, &window, window_length, &mut rng,
-        );
+            let coarse_ap = d4c_general_body(
+                x, fs, current_f0, fft_size_d4c, temporal_positions[i],
+                number_of_aperiodicities, &window, window_length, &mut rng,
+            );
 
-        // coarse_aperiodicity の構築: [-60, coarse_ap..., -SAFE_GUARD_MINIMUM]
-        let mut full_coarse = vec![0.0; number_of_aperiodicities + 2];
-        full_coarse[0] = -60.0;
-        for j in 0..number_of_aperiodicities {
-            full_coarse[j + 1] = coarse_ap[j];
-        }
-        full_coarse[number_of_aperiodicities + 1] = -SAFE_GUARD_MINIMUM;
+            let mut full_coarse = vec![0.0; number_of_aperiodicities + 2];
+            full_coarse[0] = -60.0;
+            for j in 0..number_of_aperiodicities {
+                full_coarse[j + 1] = coarse_ap[j];
+            }
+            full_coarse[number_of_aperiodicities + 1] = -SAFE_GUARD_MINIMUM;
 
-        // 線形補間
-        let mut ap_interp = vec![0.0; spec_len];
-        interp1(
-            &coarse_frequency_axis, &full_coarse, &frequency_axis, &mut ap_interp,
-        );
+            let mut ap_interp = vec![0.0; spec_len];
+            interp1(
+                &coarse_frequency_axis, &full_coarse, &frequency_axis, &mut ap_interp,
+            );
 
-        // dB → リニア変換
-        for j in 0..spec_len {
-            aperiodicity[[i, j]] = (10.0_f64).powf(ap_interp[j] / 20.0);
+            let row: Vec<f64> = (0..spec_len)
+                .map(|j| (10.0_f64).powf(ap_interp[j] / 20.0))
+                .collect();
+            Some(row)
+        })
+        .collect();
+
+    for (i, result) in frame_results.into_iter().enumerate() {
+        if let Some(row) = result {
+            for j in 0..spec_len {
+                aperiodicity[[i, j]] = row[j];
+            }
         }
     }
 

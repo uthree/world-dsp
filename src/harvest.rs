@@ -1,4 +1,5 @@
 use num_complex::Complex64;
+use rayon::prelude::*;
 
 use crate::common::{forward_real_fft, inverse_real_fft, nuttall_window};
 use crate::constant::*;
@@ -53,35 +54,45 @@ pub fn harvest(x: &[f64], fs: i32, option: &HarvestOption) -> (Vec<f64>, Vec<f64
 
         let y_spectrum = get_spectrum_for_estimation(&y, y_length, actual_fs, fft_size);
 
-        // このデシメーション比率に対応する帯域を処理
-        let min_freq = actual_fs as f64 / 2.0 / 12.0; // 下限
-        let max_freq = actual_fs as f64 / 2.0 * 0.9; // 上限
+        // このデシメーション比率に対応する帯域を並列処理
+        let min_freq = actual_fs as f64 / 2.0 / 12.0;
+        let max_freq = actual_fs as f64 / 2.0 * 0.9;
 
-        for ch in 0..number_of_channels {
-            let bf0 = boundary_f0_list[ch];
-            if bf0 < min_freq || bf0 > max_freq {
-                continue;
-            }
+        let channel_results: Vec<(usize, Vec<f64>, Vec<f64>)> = (0..number_of_channels)
+            .into_par_iter()
+            .filter_map(|ch| {
+                let bf0 = boundary_f0_list[ch];
+                if bf0 < min_freq || bf0 > max_freq {
+                    return None;
+                }
+                let half_avg_len = (actual_fs as f64 / bf0 / 2.0 + 0.5) as usize;
+                if half_avg_len < 1 {
+                    return None;
+                }
 
-            let half_avg_len = (actual_fs as f64 / bf0 / 2.0 + 0.5) as usize;
-            if half_avg_len < 1 {
-                continue;
-            }
+                let filtered_signal =
+                    get_filtered_signal(half_avg_len, fft_size, &y_spectrum, y_length);
+                let zero_crossings =
+                    get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
 
-            let filtered_signal =
-                get_filtered_signal(half_avg_len, fft_size, &y_spectrum, y_length);
-            let zero_crossings =
-                get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
+                let mut candidates = vec![0.0; f0_length];
+                let mut scores = vec![0.0; f0_length];
+                get_f0_candidate_contour(
+                    &zero_crossings,
+                    bf0,
+                    actual_fs as f64,
+                    &temporal_positions,
+                    f0_length,
+                    &mut candidates,
+                    &mut scores,
+                );
+                Some((ch, candidates, scores))
+            })
+            .collect();
 
-            get_f0_candidate_contour(
-                &zero_crossings,
-                bf0,
-                actual_fs as f64,
-                &temporal_positions,
-                f0_length,
-                &mut f0_candidates[ch],
-                &mut f0_scores[ch],
-            );
+        for (ch, candidates, scores) in channel_results {
+            f0_candidates[ch] = candidates;
+            f0_scores[ch] = scores;
         }
     }
 
@@ -94,17 +105,17 @@ pub fn harvest(x: &[f64], fs: i32, option: &HarvestOption) -> (Vec<f64>, Vec<f64
     // 急変付近の修正
     override_f0_near_steps(&mut raw_f0, f0_length);
 
-    // StoneMask でリファインメント
-    let mut refined_f0 = vec![0.0; f0_length];
-    for i in 0..f0_length {
-        if raw_f0[i] > 0.0 {
-            refined_f0[i] = get_refined_f0(x, fs, temporal_positions[i], raw_f0[i]);
-            // リファインメントが失敗したら元の値を維持
-            if refined_f0[i] <= 0.0 {
-                refined_f0[i] = raw_f0[i];
+    // StoneMask でリファインメント（並列）
+    let mut refined_f0: Vec<f64> = (0..f0_length)
+        .into_par_iter()
+        .map(|i| {
+            if raw_f0[i] <= 0.0 {
+                return 0.0;
             }
-        }
-    }
+            let refined = get_refined_f0(x, fs, temporal_positions[i], raw_f0[i]);
+            if refined <= 0.0 { raw_f0[i] } else { refined }
+        })
+        .collect();
 
     // 範囲外の F0 を除去
     for i in 0..f0_length {
