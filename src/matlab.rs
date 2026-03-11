@@ -1,6 +1,8 @@
 use ndarray::Array1;
 
-/// MATLAB 互換丸め
+/// MATLAB 互換丸め（0.5 で切り上げ）。
+///
+/// MATLAB の `round()` と同じ挙動: 0.5 は正の無限大方向に丸める。
 pub fn matlab_round(x: f64) -> i32 {
     if x > 0.0 {
         (x + 0.5) as i32
@@ -9,7 +11,9 @@ pub fn matlab_round(x: f64) -> i32 {
     }
 }
 
-/// 差分（MATLAB の diff 相当）
+/// 差分（MATLAB の `diff` 相当）。
+///
+/// 長さ `n` の入力に対し、長さ `n-1` の隣接差分ベクトルを返す。
 pub fn diff(x: &[f64]) -> Vec<f64> {
     let mut y = vec![0.0; x.len() - 1];
     for i in 0..x.len() - 1 {
@@ -18,7 +22,9 @@ pub fn diff(x: &[f64]) -> Vec<f64> {
     y
 }
 
-/// FFT シフト（左右半分を入れ替え）
+/// FFT シフト（左右半分を入れ替え）。
+///
+/// 入力 `x` と出力 `y` は同じ長さでなければならない。
 pub fn fftshift(x: &[f64], y: &mut [f64]) {
     let half = x.len() / 2;
     for i in 0..half {
@@ -27,7 +33,11 @@ pub fn fftshift(x: &[f64], y: &mut [f64]) {
     }
 }
 
-/// histc — ヒストグラムビンのインデックス（1-based）
+/// ヒストグラムビンのインデックス割り当て（MATLAB の `histc` 相当）。
+///
+/// ソート済みのブレークポイント `x` と問い合わせ点 `edges` に対し、
+/// 各 `edges[i]` が属するビン番号（1-based）を `index[i]` に格納する。
+/// `x`, `edges` はともに昇順でなければならない。
 pub fn histc(x: &[f64], edges: &[f64], index: &mut [i32]) {
     let mut count: usize = 1;
     let mut i = 0;
@@ -58,7 +68,10 @@ pub fn histc(x: &[f64], edges: &[f64], index: &mut [i32]) {
     }
 }
 
-/// 線形補間（MATLAB の interp1 相当）
+/// 線形補間（MATLAB の `interp1` 相当）。
+///
+/// ソート済みの節点 `(x, y)` に対し、問い合わせ点 `xi` での補間値を `yi` に格納する。
+/// `xi` は `x` の範囲内でなければならない。
 pub fn interp1(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     let x_length = x.len();
     let xi_length = xi.len();
@@ -78,7 +91,16 @@ pub fn interp1(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     }
 }
 
-/// 等間隔データ用高速線形補間（MATLAB の interp1Q 相当）
+/// 等間隔データ用高速線形補間（MATLAB の `interp1q` 相当）。
+///
+/// 等間隔（間隔 `shift`）の節点 `y` に対し、問い合わせ点 `xi` での補間値を `yi` に格納する。
+///
+/// # Arguments
+/// * `x` - 節点の開始値
+/// * `shift` - 節点の等間隔幅
+/// * `y` - 節点での値
+/// * `xi` - 問い合わせ点
+/// * `yi` - 補間結果の出力先
 pub fn interp1q(x: f64, shift: f64, y: &[f64], xi: &[f64], yi: &mut [f64]) {
     let x_length = y.len();
     let xi_length = xi.len();
@@ -103,7 +125,9 @@ pub fn interp1q(x: f64, shift: f64, y: &[f64], xi: &[f64], yi: &mut [f64]) {
     }
 }
 
-/// デシメート用 IIR フィルタ
+/// デシメート用 3 次 IIR ローパスフィルタ。
+///
+/// デシメーション比 `r` (2-12) に対応する事前設計済み係数を使用する。
 fn filter_for_decimate(x: &[f64], r: i32, y: &mut [f64]) {
     let (a, b) = match r {
         11 => (
@@ -175,7 +199,10 @@ fn filter_for_decimate(x: &[f64], r: i32, y: &mut [f64]) {
     }
 }
 
-/// ダウンサンプリング（MATLAB の decimate 相当）
+/// ダウンサンプリング（MATLAB の `decimate` 相当）。
+///
+/// ゼロ位相 IIR ローパスフィルタを適用した後、比率 `r` でダウンサンプリングする。
+/// 出力長は `(x.len() - 1) / r + 1`。
 pub fn decimate(x: &[f64], r: i32) -> Vec<f64> {
     let x_length = x.len();
     let n_fact = 9;
@@ -217,7 +244,13 @@ pub fn decimate(x: &[f64], r: i32) -> Vec<f64> {
     y
 }
 
-/// FFT ベース畳み込み
+/// FFT ベース畳み込み（高速 FIR フィルタリング）。
+///
+/// 入力 `x` とフィルタ `h` を周波数領域で乗算し、畳み込み結果を返す。
+/// `x` と `h` は `fft_size` 以下の長さでなければならない。
+///
+/// # Returns
+/// `Array1<f64>` shape: `[fft_size]`
 pub fn fast_fftfilt(x: &[f64], h: &[f64], fft_size: usize) -> Array1<f64> {
     use num_complex::Complex64;
     use rustfft::FftPlanner;
@@ -226,34 +259,32 @@ pub fn fast_fftfilt(x: &[f64], h: &[f64], fft_size: usize) -> Array1<f64> {
     let fft_forward = planner.plan_fft_forward(fft_size);
     let fft_inverse = planner.plan_fft_inverse(fft_size);
 
-    // x の FFT
     let mut x_buf: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); fft_size];
     for (i, &val) in x.iter().enumerate() {
         x_buf[i] = Complex64::new(val, 0.0);
     }
     fft_forward.process(&mut x_buf);
 
-    // h の FFT
     let mut h_buf: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); fft_size];
     for (i, &val) in h.iter().enumerate() {
         h_buf[i] = Complex64::new(val, 0.0);
     }
     fft_forward.process(&mut h_buf);
 
-    // 乗算
     let mut product: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); fft_size];
     for i in 0..fft_size {
         product[i] = x_buf[i] * h_buf[i];
     }
 
-    // IFFT + 正規化 (rustfft は非正規化なので 1/N が必要)
     fft_inverse.process(&mut product);
     let inv_n = 1.0 / fft_size as f64;
 
     Array1::from_vec(product.iter().map(|c| c.re * inv_n).collect())
 }
 
-/// 標準偏差（MATLAB 互換, N-1 で正規化）
+/// 標準偏差（MATLAB 互換, N-1 で正規化）。
+///
+/// 不偏標準偏差を返す。長さ 1 以下の入力では NaN を返す可能性がある。
 pub fn matlab_std(x: &[f64]) -> f64 {
     let n = x.len() as f64;
     let avg: f64 = x.iter().sum::<f64>() / n;

@@ -4,9 +4,19 @@ use crate::common::{blackman_window, forward_real_fft};
 use crate::constant::*;
 use crate::matlab::matlab_round;
 
-/// StoneMask F0 リファインメント
+/// StoneMask F0 リファインメント。
 ///
-/// DIO や Harvest で得られた粗い F0 推定値を、スペクトル解析により精密化する。
+/// DIO や Harvest で得られた粗い F0 推定値を、高調波の瞬時周波数解析により精密化する。
+/// 各フレームは rayon で並列処理される。
+///
+/// # Arguments
+/// * `x` - 入力波形（モノラル）
+/// * `fs` - サンプリング周波数 (Hz)
+/// * `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
+/// * `f0` - 各フレームの粗い F0 推定値 (Hz), 長さ `num_frames`
+///
+/// # Returns
+/// 精密化された F0 列 (Hz), 長さ `num_frames`。無声フレーム（入力 F0 <= 40Hz）は 0.0。
 pub fn stonemask(x: &[f64], fs: i32, temporal_positions: &[f64], f0: &[f64]) -> Vec<f64> {
     (0..f0.len())
         .into_par_iter()
@@ -14,7 +24,11 @@ pub fn stonemask(x: &[f64], fs: i32, temporal_positions: &[f64], f0: &[f64]) -> 
         .collect()
 }
 
-/// 単一フレームの F0 リファインメント（Harvest からも呼ばれる）
+/// 単一フレームの F0 リファインメント。
+///
+/// Blackman 窓で切り出し、パワースペクトルとクロススペクトルから
+/// 高調波位置での瞬時周波数を求め、振幅加重平均で精密な F0 を推定する。
+/// 補正量が 20% を超える場合は元の `initial_f0` をそのまま返す。
 pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_f0: f64) -> f64 {
     if initial_f0 <= FLOOR_F0_STONEMASK || initial_f0 > fs as f64 / 12.0 {
         return 0.0;
@@ -31,11 +45,9 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
     let window_len = 2 * half_window_length + 1;
     let main_window = blackman_window(window_len);
 
-    // windowed signal
     let mut main_spectrum_input = vec![0.0; fft_size];
     let mut diff_spectrum_input = vec![0.0; fft_size];
 
-    // diff_window: numerical derivative of main_window
     let mut diff_window = vec![0.0; window_len];
     for i in 0..window_len - 1 {
         diff_window[i] = main_window[i + 1] - main_window[i];
@@ -56,7 +68,6 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
     let main_spectrum = forward_real_fft(&main_spectrum_input, fft_size);
     let diff_spectrum = forward_real_fft(&diff_spectrum_input, fft_size);
 
-    // power_spectrum と numerator_i
     let half_fft = fft_size / 2 + 1;
     let mut power_spectrum = vec![0.0; half_fft];
     let mut numerator_i = vec![0.0; half_fft];
@@ -67,12 +78,10 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
             main_spectrum[i].re * diff_spectrum[i].im - main_spectrum[i].im * diff_spectrum[i].re;
     }
 
-    // 1回目: 2倍音で暫定F0
+    // 1回目: 2倍音で暫定F0、2回目: 6倍音で精密F0
     let tentative_f0 = fix_f0(&power_spectrum, &numerator_i, fft_size, fs, initial_f0, 2);
-    // 2回目: 6倍音で精密F0
     let refined = fix_f0(&power_spectrum, &numerator_i, fft_size, fs, tentative_f0, 6);
 
-    // 補正量が 20% を超えたら元の f0 を維持
     if (refined - initial_f0).abs() / initial_f0 > 0.2 {
         initial_f0
     } else {
@@ -80,7 +89,7 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
     }
 }
 
-/// 高調波位置での瞬時周波数の振幅加重平均で F0 を推定
+/// 高調波位置での瞬時周波数の振幅加重平均で F0 を推定する。
 fn fix_f0(
     power_spectrum: &[f64],
     numerator_i: &[f64],

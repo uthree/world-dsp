@@ -5,10 +5,22 @@ use crate::common::{forward_real_fft, inverse_real_fft, nuttall_window};
 use crate::constant::*;
 use crate::matlab::{decimate, diff, interp1, matlab_round};
 
-/// Harvest ピッチ推定
+/// Harvest ピッチ推定。
 ///
-/// C++ WORLD の Harvest に準拠した F0 推定を行う。
+/// C++ WORLD の Harvest に準拠した高精度 F0 推定を行う。
 /// 内部で 1ms フレーム周期で推定し、指定フレーム周期にリサンプルする。
+/// マルチチャンネルゼロクロッシング → VUV 判定 → StoneMask 相当のリファインメント
+/// → 後処理 → Butterworth 平滑化のパイプラインで処理する。
+///
+/// # Arguments
+/// * `x` - 入力波形（モノラル）
+/// * `fs` - サンプリング周波数 (Hz)
+/// * `option` - Harvest パラメータ
+///
+/// # Returns
+/// `(temporal_positions, f0)` のタプル。
+/// - `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
+/// - `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`。無声フレームは 0.0
 pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
     let channels_in_octave = 40.0;
     let target_fs = 8000.0;

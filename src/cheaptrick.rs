@@ -7,7 +7,7 @@ use crate::common::*;
 use crate::constant::*;
 use crate::matlab::*;
 
-/// F0 適応窓で波形を切り出し
+/// F0 適応窓で波形を切り出す（Hanning 窓ベース）。
 fn get_windowed_waveform(
     x: &[f64],
     fs: i32,
@@ -33,7 +33,6 @@ fn get_windowed_waveform(
         safe_index[i] = idx.max(0).min(x.len() as i32 - 1) as usize;
     }
 
-    // Hanning 窓設計
     let mut average = 0.0;
     for i in 0..window_length {
         let position = base_index[i] as f64 / 1.5 / fs as f64;
@@ -45,14 +44,12 @@ fn get_windowed_waveform(
         window[i] /= average;
     }
 
-    // F0 適応窓掛け
     let mut waveform = vec![0.0; fft_size];
     for i in 0..window_length {
         waveform[i] = x[safe_index[i]] * window[i]
             + rng.sample::<f64, _>(StandardNormal) * SAFE_GUARD_MINIMUM;
     }
 
-    // DC 成分除去
     let mut tmp_weight1 = 0.0;
     let mut tmp_weight2 = 0.0;
     for i in 0..window_length {
@@ -67,7 +64,7 @@ fn get_windowed_waveform(
     waveform
 }
 
-/// パワースペクトル計算（DC 補正付き）
+/// パワースペクトル計算（DC 補正付き）。
 fn get_power_spectrum(waveform: &mut Vec<f64>, fs: i32, f0: f64, fft_size: usize) -> Vec<f64> {
     let spectrum = forward_real_fft(waveform, fft_size);
 
@@ -81,7 +78,10 @@ fn get_power_spectrum(waveform: &mut Vec<f64>, fs: i32, f0: f64, fft_size: usize
     output
 }
 
-/// ケプストラム平滑化と復元
+/// ケプストラム平滑化と復元。
+///
+/// 対数パワースペクトルをケプストラム領域でリフタリングし、
+/// 指数変換して平滑化されたスペクトル包絡を返す。
 fn smoothing_with_recovery(
     f0: f64,
     fs: i32,
@@ -91,7 +91,6 @@ fn smoothing_with_recovery(
 ) -> Vec<f64> {
     let half = fft_size / 2;
 
-    // リフタ計算
     let mut smoothing_lifter = vec![0.0; half + 1];
     let mut compensation_lifter = vec![0.0; half + 1];
 
@@ -103,7 +102,6 @@ fn smoothing_with_recovery(
         compensation_lifter[i] = (1.0 - 2.0 * q1) + 2.0 * q1 * (2.0 * PI * quefrency * f0).cos();
     }
 
-    // log(power_spectrum) を取って対称化
     let mut log_spectrum = vec![0.0; fft_size];
     for i in 0..=half {
         log_spectrum[i] = power_spectrum[i].ln();
@@ -112,10 +110,8 @@ fn smoothing_with_recovery(
         log_spectrum[fft_size - i] = log_spectrum[i];
     }
 
-    // FFT（ケプストラムへ）
     let spectrum = forward_real_fft(&log_spectrum, fft_size);
 
-    // リフタ適用
     let mut filtered: Vec<num_complex::Complex64> =
         vec![num_complex::Complex64::new(0.0, 0.0); fft_size / 2 + 1];
     for i in 0..=half {
@@ -125,10 +121,8 @@ fn smoothing_with_recovery(
         );
     }
 
-    // IFFT
     let waveform = inverse_real_fft(&filtered, fft_size);
 
-    // exp で復元
     let mut spectral_envelope = vec![0.0; half + 1];
     for i in 0..=half {
         spectral_envelope[i] = waveform[i].exp();
@@ -137,7 +131,9 @@ fn smoothing_with_recovery(
     spectral_envelope
 }
 
-/// CheapTrick の1フレーム処理
+/// CheapTrick の1フレーム処理。
+///
+/// F0 適応窓掛け → パワースペクトル → 線形平滑化 → ケプストラム平滑化 の順で処理。
 fn cheaptrick_general_body(
     x: &[f64],
     fs: i32,
@@ -147,13 +143,9 @@ fn cheaptrick_general_body(
     q1: f64,
     rng: &mut impl Rng,
 ) -> Vec<f64> {
-    // F0 適応窓掛け
     let mut waveform = get_windowed_waveform(x, fs, current_f0, current_position, fft_size, rng);
-
-    // パワースペクトル計算（DC 補正付き）
     let power_spectrum = get_power_spectrum(&mut waveform, fs, current_f0, fft_size);
 
-    // 線形平滑化
     let mut smoothed = vec![0.0; fft_size / 2 + 1];
     linear_smoothing(
         &power_spectrum,
@@ -163,26 +155,28 @@ fn cheaptrick_general_body(
         &mut smoothed,
     );
 
-    // 微小ノイズ追加（ゼロ防止）
     for i in 0..=fft_size / 2 {
         smoothed[i] += rng.sample::<f64, _>(StandardNormal).abs() * EPS;
     }
 
-    // ケプストラム平滑化と復元
     smoothing_with_recovery(current_f0, fs, fft_size, q1, &smoothed)
 }
 
-/// CheapTrick スペクトル包絡推定
+/// CheapTrick スペクトル包絡推定。
+///
+/// F0 適応窓とケプストラム平滑化により、各フレームのスペクトル包絡を推定する。
+/// 各フレームは rayon で並列処理される。
 ///
 /// # Arguments
-/// * `x` - 入力波形
-/// * `fs` - サンプリング周波数
-/// * `temporal_positions` - 各フレームの時間位置 (秒)
-/// * `f0` - 各フレームの基本周波数 (Hz)
-/// * `option` - CheapTrick
+/// * `x` - 入力波形（モノラル）
+/// * `fs` - サンプリング周波数 (Hz)
+/// * `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
+/// * `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`
+/// * `option` - CheapTrick パラメータ
 ///
 /// # Returns
-/// スペクトル包絡 [num_frames x fft_size/2+1]
+/// スペクトル包絡 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`。
+/// 各要素はパワースペクトル密度（線形スケール、常に正）。
 pub fn cheaptrick(
     x: &[f64],
     fs: i32,
@@ -224,7 +218,10 @@ pub fn cheaptrick(
 }
 
 impl CheapTrick {
-    /// スペクトル包絡を推定する
+    /// スペクトル包絡を推定する。
+    ///
+    /// # Returns
+    /// `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
     pub fn estimate(
         &self,
         x: &[f64],

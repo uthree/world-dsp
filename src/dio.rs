@@ -5,10 +5,20 @@ use crate::common::{forward_real_fft, inverse_real_fft, nuttall_window};
 use crate::constant::*;
 use crate::matlab::{decimate, diff, interp1, matlab_round};
 
-/// DIO ピッチ推定
+/// DIO ピッチ推定。
 ///
-/// F0（基本周波数）を推定する。DIO は高速で安定した F0 推定を行う。
-/// 返り値は (temporal_positions, f0) のタプル。
+/// ゼロクロッシング解析と FFT ベースのバンドパスフィルタリングにより F0 を推定する。
+/// 各帯域の処理は rayon で並列化される。
+///
+/// # Arguments
+/// * `x` - 入力波形（モノラル）
+/// * `fs` - サンプリング周波数 (Hz)
+/// * `option` - DIO パラメータ
+///
+/// # Returns
+/// `(temporal_positions, f0)` のタプル。
+/// - `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
+/// - `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`。無声フレームは 0.0
 pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     let f0_length = get_samples_for_dio(fs, x.len(), option.frame_period);
     let mut temporal_positions = vec![0.0; f0_length];
@@ -97,6 +107,7 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     )
 }
 
+/// speed パラメータからデシメーション比率を計算する。
 fn get_decimation_ratio(speed: i32, fs: i32) -> i32 {
     if speed <= 1 {
         return 1;

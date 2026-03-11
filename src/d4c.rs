@@ -7,7 +7,7 @@ use crate::common::*;
 use crate::constant::*;
 use crate::matlab::*;
 
-/// D4C 用の F0 適応窓掛け波形取得
+/// D4C 用の F0 適応窓掛け波形取得。
 fn get_windowed_waveform_d4c(
     x: &[f64],
     fs: i32,
@@ -36,14 +36,12 @@ fn get_windowed_waveform_d4c(
         safe_index[i] = idx.max(0).min(x.len() as i32 - 1) as usize;
     }
 
-    // 窓関数設計
     if window_type == HANNING {
         for i in 0..window_length {
             let position = (2.0 * base_index[i] as f64 / window_length_ratio) / fs as f64;
             window[i] = 0.5 * (PI * position * current_f0).cos() + 0.5;
         }
     } else {
-        // Blackman
         for i in 0..window_length {
             let position = (2.0 * base_index[i] as f64 / window_length_ratio) / fs as f64;
             window[i] = 0.42
@@ -52,14 +50,12 @@ fn get_windowed_waveform_d4c(
         }
     }
 
-    // F0 適応窓掛け
     let mut waveform = vec![0.0; fft_size];
     for i in 0..window_length {
         waveform[i] =
             x[safe_index[i]] * window[i] + rng.sample::<f64, _>(StandardNormal) * SAFE_GUARD_D4C;
     }
 
-    // DC 成分除去
     let mut tmp_weight1 = 0.0;
     let mut tmp_weight2 = 0.0;
     for i in 0..window_length {
@@ -74,7 +70,9 @@ fn get_windowed_waveform_d4c(
     waveform
 }
 
-/// エネルギー重心計算
+/// エネルギー重心計算。
+///
+/// Blackman 窓で切り出した波形のスペクトル重心を計算する。
 fn get_centroid(
     x: &[f64],
     fs: i32,
@@ -108,7 +106,6 @@ fn get_centroid(
     let tmp_real: Vec<f64> = (0..=fft_size / 2).map(|i| spectrum[i].re).collect();
     let tmp_imag: Vec<f64> = (0..=fft_size / 2).map(|i| spectrum[i].im).collect();
 
-    // 波形に (i+1) を掛ける
     for i in 0..fft_size {
         waveform[i] *= (i + 1) as f64;
     }
@@ -122,7 +119,9 @@ fn get_centroid(
     centroid
 }
 
-/// 時間的に静的なエネルギー重心
+/// 時間的に静的なエネルギー重心。
+///
+/// 現在位置の前後 1/4 周期で 2 つの重心を取り、平均する。
 fn get_static_centroid(
     x: &[f64],
     fs: i32,
@@ -163,7 +162,7 @@ fn get_static_centroid(
     static_centroid
 }
 
-/// 平滑化パワースペクトル
+/// 平滑化パワースペクトルの計算。
 fn get_smoothed_power_spectrum(
     x: &[f64],
     fs: i32,
@@ -202,7 +201,7 @@ fn get_smoothed_power_spectrum(
     smoothed
 }
 
-/// 時間的に静的な群遅延
+/// 時間的に静的な群遅延の計算。
 fn get_static_group_delay(
     static_centroid: &[f64],
     smoothed_power_spectrum: &[f64],
@@ -236,7 +235,7 @@ fn get_static_group_delay(
     static_group_delay
 }
 
-/// 粗い非周期性を 3kHz 間隔で計算
+/// 粗い非周期性を 3kHz 間隔で計算する。
 fn get_coarse_aperiodicity(
     static_group_delay: &[f64],
     fs: i32,
@@ -268,7 +267,6 @@ fn get_coarse_aperiodicity(
 
         power_spectrum.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        // 累積和
         for j in 1..power_spectrum.len() {
             power_spectrum[j] += power_spectrum[j - 1];
         }
@@ -286,7 +284,9 @@ fn get_coarse_aperiodicity(
     coarse_aperiodicity
 }
 
-/// D4C LoveTrain — VUV 判定
+/// D4C LoveTrain — VUV（有声/無声）判定。
+///
+/// 各フレームのパワー分布比率を計算し、有声度スコアを返す。
 fn d4c_love_train(x: &[f64], fs: i32, f0: &[f64], temporal_positions: &[f64]) -> Vec<f64> {
     let lowest_f0 = 40.0;
     let fft_size =
@@ -335,7 +335,7 @@ fn d4c_love_train(x: &[f64], fs: i32, f0: &[f64], temporal_positions: &[f64]) ->
         .collect()
 }
 
-/// D4C の1フレーム処理
+/// D4C の1フレーム処理。
 fn d4c_general_body(
     x: &[f64],
     fs: i32,
@@ -362,7 +362,6 @@ fn d4c_general_body(
         window_length,
     );
 
-    // F0 ベースの補正
     for i in 0..number_of_aperiodicities {
         coarse_aperiodicity[i] = (coarse_aperiodicity[i] + (current_f0 - 100.0) / 50.0).min(0.0);
     }
@@ -370,18 +369,23 @@ fn d4c_general_body(
     coarse_aperiodicity
 }
 
-/// D4C 非周期性指標推定
+/// D4C 非周期性指標推定。
+///
+/// 群遅延解析とエネルギー重心により、各フレーム・各周波数ビンの非周期性を推定する。
+/// 各フレームは rayon で並列処理される。
 ///
 /// # Arguments
-/// * `x` - 入力波形
-/// * `fs` - サンプリング周波数
-/// * `temporal_positions` - 各フレームの時間位置 (秒)
-/// * `f0` - 各フレームの基本周波数 (Hz)
+/// * `x` - 入力波形（モノラル）
+/// * `fs` - サンプリング周波数 (Hz)
+/// * `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
+/// * `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`
 /// * `fft_size` - FFT サイズ
-/// * `option` - D4C
+/// * `option` - D4C パラメータ
 ///
 /// # Returns
-/// 非周期性指標 [num_frames x fft_size/2+1] 値域: [0, 1]
+/// 非周期性指標 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`。
+/// 各要素は非周期性比率（線形スケール、値域 [0, 1]）。
+/// 無声フレームは `1.0 - SAFE_GUARD_MINIMUM` で初期化される。
 pub fn d4c(
     x: &[f64],
     fs: i32,
@@ -393,7 +397,6 @@ pub fn d4c(
     let f0_length = f0.len();
     let spec_len = fft_size / 2 + 1;
 
-    // 初期値: 1.0 - SAFE_GUARD_MINIMUM
     let mut aperiodicity = Array2::from_elem((f0_length, spec_len), 1.0 - SAFE_GUARD_MINIMUM);
 
     let fft_size_d4c =
@@ -405,10 +408,8 @@ pub fn d4c(
     let window_length = (FREQUENCY_INTERVAL * fft_size_d4c as f64 / fs as f64) as usize * 2 + 1;
     let window = nuttall_window(window_length);
 
-    // D4C LoveTrain
     let aperiodicity0 = d4c_love_train(x, fs, f0, temporal_positions);
 
-    // 粗い周波数軸
     let mut coarse_frequency_axis = vec![0.0; number_of_aperiodicities + 2];
     for i in 0..=number_of_aperiodicities {
         coarse_frequency_axis[i] = i as f64 * FREQUENCY_INTERVAL;
@@ -419,7 +420,6 @@ pub fn d4c(
         .map(|i| i as f64 * fs as f64 / fft_size as f64)
         .collect();
 
-    // 各フレームの非周期性を並列計算
     let frame_results: Vec<Option<Vec<f64>>> = (0..f0_length)
         .into_par_iter()
         .map(|i| {
@@ -476,7 +476,10 @@ pub fn d4c(
 }
 
 impl D4C {
-    /// 非周期性指標を推定する
+    /// 非周期性指標を推定する。
+    ///
+    /// # Returns
+    /// `Array2<f64>` shape: `[num_frames, fft_size/2+1]`。値域 [0, 1]。
     pub fn estimate(
         &self,
         x: &[f64],

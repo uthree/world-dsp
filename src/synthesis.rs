@@ -7,7 +7,7 @@ use crate::common::*;
 use crate::constant::*;
 use crate::matlab::*;
 
-/// 時間パラメータの準備
+/// 時間パラメータの準備（F0 補間用の粗い時間軸を生成）。
 fn get_temporal_parameters_for_time_base(
     f0: &[f64],
     fs: i32,
@@ -34,7 +34,7 @@ fn get_temporal_parameters_for_time_base(
     (time_axis, coarse_time_axis, coarse_f0, coarse_vuv)
 }
 
-/// パルス位置検出
+/// パルス位置検出（位相ラッピングによるグロタルパルスの位置を特定）。
 fn get_pulse_locations_for_time_base(
     interpolated_f0: &[f64],
     time_axis: &[f64],
@@ -76,7 +76,7 @@ fn get_pulse_locations_for_time_base(
     )
 }
 
-/// タイムベース計算
+/// タイムベース計算（F0 補間 → パルス位置検出）。
 fn get_time_base(
     f0: &[f64],
     fs: i32,
@@ -121,7 +121,7 @@ fn get_time_base(
     )
 }
 
-/// DC 除去フィルタ設計
+/// DC 除去フィルタの設計（Hanning ベース）。
 fn get_dc_remover(fft_size: usize) -> Vec<f64> {
     let mut dc_remover = vec![0.0; fft_size];
     let mut dc_component = 0.0;
@@ -139,7 +139,9 @@ fn get_dc_remover(fft_size: usize) -> Vec<f64> {
     dc_remover
 }
 
-/// スペクトル包絡の時間補間
+/// スペクトル包絡の時間補間。
+///
+/// 隣接フレーム間で線形補間する。
 fn get_spectral_envelope(
     current_time: f64,
     frame_period: f64,
@@ -169,7 +171,9 @@ fn get_spectral_envelope(
     spectral_envelope
 }
 
-/// 非周期性比率の時間補間
+/// 非周期性比率の時間補間。
+///
+/// 隣接フレーム間で線形補間し、安全値クランプと二乗を適用する。
 fn get_aperiodic_ratio(
     current_time: f64,
     frame_period: f64,
@@ -201,7 +205,7 @@ fn get_aperiodic_ratio(
     aperiodic_spectrum
 }
 
-/// ノイズスペクトル生成（ndarray-rand を使用）
+/// ノイズスペクトル生成。標準正規分布のノイズを FFT する。
 fn get_noise_spectrum(noise_size: usize, fft_size: usize) -> Vec<num_complex::Complex64> {
     let noise = Array1::random(noise_size, StandardNormal);
     let mean = noise.mean().unwrap_or(0.0);
@@ -214,7 +218,9 @@ fn get_noise_spectrum(noise_size: usize, fft_size: usize) -> Vec<num_complex::Co
     forward_real_fft(&waveform, fft_size)
 }
 
-/// 分数時間シフト付きスペクトル計算
+/// 分数時間シフト付きスペクトル計算。
+///
+/// パルス位置のサブサンプル精度を反映するため、スペクトルに位相回転を適用する。
 fn get_spectrum_with_fractional_time_shift(
     spectrum: &mut [num_complex::Complex64],
     fft_size: usize,
@@ -224,14 +230,14 @@ fn get_spectrum_with_fractional_time_shift(
         let re = spectrum[i].re;
         let im = spectrum[i].im;
         let re2 = (coefficient * i as f64).cos();
-        let im2 = (1.0 - re2 * re2).sqrt(); // sin(pshift)
+        let im2 = (1.0 - re2 * re2).sqrt();
 
         spectrum[i].re = re * re2 + im * im2;
         spectrum[i].im = im * re2 - re * im2;
     }
 }
 
-/// DC 成分除去
+/// DC 成分除去。
 fn remove_dc_component(
     periodic_response: &[f64],
     fft_size: usize,
@@ -250,7 +256,10 @@ fn remove_dc_component(
     }
 }
 
-/// 周期成分応答
+/// 周期成分応答の計算。
+///
+/// スペクトル包絡の周期成分（1 - 非周期比率）から最小位相スペクトルを構築し、
+/// 時間領域応答を返す。
 fn get_periodic_response(
     fft_size: usize,
     spectrum: &[f64],
@@ -278,17 +287,14 @@ fn get_periodic_response(
         inv_spectrum[i] = min_phase[i];
     }
 
-    // 分数時間シフト
     let coefficient = 2.0 * PI * fractional_time_shift * fs as f64 / fft_size as f64;
     get_spectrum_with_fractional_time_shift(&mut inv_spectrum, fft_size, coefficient);
 
     let waveform = inverse_real_fft(&inv_spectrum, fft_size);
 
-    // fftshift
     let mut shifted = vec![0.0; fft_size];
     fftshift(&waveform, &mut shifted);
 
-    // DC 除去
     let mut periodic_response = vec![0.0; fft_size];
     remove_dc_component(&shifted, fft_size, dc_remover, &mut periodic_response);
 
@@ -299,7 +305,9 @@ fn get_periodic_response(
     periodic_response
 }
 
-/// 非周期成分応答
+/// 非周期成分応答の計算。
+///
+/// スペクトル包絡の非周期成分にノイズスペクトルを乗じて時間領域応答を返す。
 fn get_aperiodic_response(
     noise_size: usize,
     fft_size: usize,
@@ -336,7 +344,7 @@ fn get_aperiodic_response(
     aperiodic_response
 }
 
-/// 1フレームセグメント生成
+/// 1フレームセグメント生成（周期成分 + 非周期成分）。
 fn get_one_frame_segment(
     current_vuv: f64,
     noise_size: usize,
@@ -387,18 +395,22 @@ fn get_one_frame_segment(
     response
 }
 
-/// 波形合成（ボコーダー）
+/// 波形合成（ボコーダー）。
+///
+/// F0・スペクトル包絡・非周期性指標から音声波形を合成する。
+/// パルス位置ごとの応答を rayon で並列計算し、重畳加算で出力波形を構築する。
 ///
 /// # Arguments
-/// * `f0` - 基本周波数列 (Hz)
-/// * `spectrogram` - スペクトル包絡 [num_frames x fft_size/2+1]
-/// * `aperiodicity` - 非周期性指標 [num_frames x fft_size/2+1]
+/// * `f0` - 基本周波数列 (Hz), 長さ `num_frames`。無声フレームは 0.0
+/// * `spectrogram` - スペクトル包絡 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
+/// * `aperiodicity` - 非周期性指標 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
 /// * `frame_period` - フレーム周期 (ms)
-/// * `fs` - サンプリング周波数
+/// * `fs` - サンプリング周波数 (Hz)
 /// * `fft_size` - FFT サイズ
 ///
 /// # Returns
-/// 合成波形
+/// 合成波形 `Array1<f64>` shape: `[y_length]`。
+/// `y_length = floor((num_frames - 1) * frame_period / 1000 * fs) + 1`
 pub fn synthesis(
     f0: &[f64],
     spectrogram: &Array2<f64>,
@@ -410,7 +422,6 @@ pub fn synthesis(
     let f0_length = f0.len();
     let frame_period_sec = frame_period / 1000.0;
 
-    // 出力長の計算
     let y_length = ((f0_length as f64 - 1.0) * frame_period_sec * fs as f64) as usize + 1;
     let mut y = vec![0.0; y_length];
 
@@ -423,7 +434,6 @@ pub fn synthesis(
 
     let number_of_pulses = pulse_locations.len();
 
-    // noise_size を事前計算
     let noise_sizes: Vec<usize> = (0..number_of_pulses)
         .map(|i| {
             let ns = if i + 1 < number_of_pulses {
@@ -437,7 +447,6 @@ pub fn synthesis(
         })
         .collect();
 
-    // 各パルスのレスポンスを並列計算
     let responses: Vec<Vec<f64>> = (0..number_of_pulses)
         .into_par_iter()
         .map(|i| {
@@ -457,7 +466,7 @@ pub fn synthesis(
         })
         .collect();
 
-    // 重複区間への加算は逐次処理
+    // 重畳加算（逐次処理）
     for i in 0..number_of_pulses {
         let offset = pulse_locations_index[i] as i64 - fft_size as i64 / 2 + 1;
         let lower_limit = if offset < 0 { (-offset) as usize } else { 0 };
@@ -473,7 +482,15 @@ pub fn synthesis(
 }
 
 impl Synthesizer {
-    /// パラメータから波形を合成する
+    /// パラメータから波形を合成する。
+    ///
+    /// # Arguments
+    /// * `f0` - 基本周波数列 (Hz), 長さ `num_frames`
+    /// * `spectrogram` - スペクトル包絡 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
+    /// * `aperiodicity` - 非周期性指標 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
+    ///
+    /// # Returns
+    /// 合成波形 `Array1<f64>` shape: `[y_length]`
     pub fn synthesize(
         &self,
         f0: &[f64],
