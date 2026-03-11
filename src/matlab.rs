@@ -27,7 +27,7 @@ pub fn fftshift(x: &[f64], y: &mut [f64]) {
     }
 }
 
-/// histc — ヒストグラムビンのインデックス（1-based, MATLAB 互換）
+/// histc — ヒストグラムビンのインデックス（1-based）
 pub fn histc(x: &[f64], edges: &[f64], index: &mut [i32]) {
     let mut count: usize = 1;
     let mut i = 0;

@@ -37,9 +37,13 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
         .map(|i| option.f0_floor * (2.0_f64).powf((i + 1) as f64 / option.channels_in_octave))
         .collect();
 
-    // FFT サイズ
+    // C++: fft_size = GetSuitableFFTSize(y_length +
+    //   matlab_round(actual_fs / kCutOff) * 2 + 1 +
+    //   (4 * (int)(1.0 + actual_fs / boundary_f0_list[0] / 2.0)))
     let fft_size = get_suitable_fft_size(
-        (actual_fs as f64 / CUTOFF + 1.0) as usize * 4 + (1.0 + y_length as f64) as usize,
+        y_length
+            + (matlab_round(actual_fs as f64 / CUTOFF) * 2 + 1) as usize
+            + (4.0 * (1.0 + actual_fs as f64 / boundary_f0_list[0] / 2.0)) as usize,
     );
 
     // スペクトル計算（ローカットフィルタ適用済み）
@@ -65,6 +69,10 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
                 &mut candidates,
                 &mut scores,
             );
+            // C++: raw_f0_scores[i][j] = f0_score[j] / (f0_candidate[j] + safeguard)
+            for j in 0..f0_length {
+                scores[j] = scores[j] / (candidates[j] + SAFE_GUARD_MINIMUM);
+            }
             (candidates, scores)
         })
         .collect();
@@ -73,27 +81,20 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     let f0_scores: Vec<Vec<f64>> = band_results.iter().map(|(_, s)| s.clone()).collect();
 
     // 最良候補選択
-    let mut best_f0 = get_best_f0_contour(&f0_candidates, &f0_scores, f0_length, number_of_bands);
+    let best_f0 = get_best_f0_contour(&f0_candidates, &f0_scores, f0_length, number_of_bands);
 
-    // 後処理
-    fix_step1(&mut best_f0, option.allowed_range);
-    fix_step2(&mut best_f0, option.allowed_range);
-    fix_step3(
-        &mut best_f0,
+    // C++ WORLD 準拠の後処理
+    fix_f0_contour(
+        option.frame_period,
+        number_of_bands,
         &f0_candidates,
         &f0_scores,
-        number_of_bands,
+        &best_f0,
+        f0_length,
+        option.f0_floor,
         option.allowed_range,
-    );
-    fix_step4(
-        &mut best_f0,
-        &f0_candidates,
-        &f0_scores,
-        number_of_bands,
-        option.allowed_range,
-    );
-
-    (temporal_positions, best_f0)
+        &mut temporal_positions,
+    )
 }
 
 fn get_decimation_ratio(speed: i32, fs: i32) -> i32 {
@@ -105,7 +106,7 @@ fn get_decimation_ratio(speed: i32, fs: i32) -> i32 {
     if fs / ratio < 100 { 1 } else { ratio }
 }
 
-/// ローカットフィルタを適用したスペクトルを取得
+/// ローカットフィルタを適用したスペクトルを取得（C++ WORLD 準拠）
 fn get_spectrum_for_estimation(
     y: &[f64],
     y_length: usize,
@@ -117,71 +118,88 @@ fn get_spectrum_for_estimation(
     for i in 0..y_length.min(fft_size) {
         y_padded[i] = y[i];
     }
-    let y_spectrum = forward_real_fft(&y_padded, fft_size);
+
+    // C++: DC 成分除去
+    let mean_y: f64 = y_padded[..y_length].iter().sum::<f64>() / y_length as f64;
+    for i in 0..y_length {
+        y_padded[i] -= mean_y;
+    }
+
+    let mut y_spectrum = forward_real_fft(&y_padded, fft_size);
 
     // ローカットフィルタ設計・適用
     let low_cut_filter = design_low_cut_filter(actual_fs, fft_size);
     let filter_spectrum = forward_real_fft(&low_cut_filter, fft_size);
 
-    let mut result = vec![Complex64::new(0.0, 0.0); fft_size];
     let half = fft_size / 2 + 1;
     for i in 0..half {
-        result[i] = y_spectrum[i] * filter_spectrum[i];
+        // 複素数乗算
+        let tmp = y_spectrum[i].re * filter_spectrum[i].re
+            - y_spectrum[i].im * filter_spectrum[i].im;
+        y_spectrum[i].im = y_spectrum[i].re * filter_spectrum[i].im
+            + y_spectrum[i].im * filter_spectrum[i].re;
+        y_spectrum[i].re = tmp;
     }
-    // ミラー
-    for i in half..fft_size {
-        result[i] = result[fft_size - i].conj();
-    }
-    result
+
+    y_spectrum
 }
 
-/// ローカットフィルタ設計
+/// ローカットフィルタ設計（C++ WORLD の DesignLowCutFilter に準拠）
 fn design_low_cut_filter(actual_fs: i32, fft_size: usize) -> Vec<f64> {
-    let filter_length_half = (actual_fs as f64 / CUTOFF * 2.0) as usize;
-    let filter_length = 2 * filter_length_half + 1;
+    let cutoff_in_sample = matlab_round(actual_fs as f64 / CUTOFF);
+    let n = (cutoff_in_sample * 2 + 1) as usize;
     let mut low_cut_filter = vec![0.0; fft_size];
 
-    for i in 1..=filter_length_half {
-        low_cut_filter[filter_length_half + i] =
-            0.5 - 0.5 * (2.0 * PI * i as f64 / (filter_length as f64 - 1.0)).cos();
-        low_cut_filter[filter_length_half - i] = low_cut_filter[filter_length_half + i];
+    // Half-Hanning window
+    for i in 1..=n {
+        low_cut_filter[i - 1] = 0.5 - 0.5 * (i as f64 * 2.0 * PI / (n as f64 + 1.0)).cos();
+    }
+    for i in n..fft_size {
+        low_cut_filter[i] = 0.0;
     }
 
-    let sum_of_amplitude: f64 = low_cut_filter.iter().sum();
-    for i in 0..filter_length {
-        low_cut_filter[i] /= sum_of_amplitude;
+    // Normalize and negate (low-pass)
+    let sum_of_amplitude: f64 = low_cut_filter[..n].iter().sum();
+    for i in 0..n {
+        low_cut_filter[i] = -low_cut_filter[i] / sum_of_amplitude;
     }
 
-    // ハイパスに変換
-    let center_val = low_cut_filter[filter_length_half];
-    for i in 0..filter_length {
-        low_cut_filter[i] = -low_cut_filter[i];
+    // Circular shift: move first (N-1)/2 samples to end
+    let half_n = (n - 1) / 2;
+    for i in 0..half_n {
+        low_cut_filter[fft_size - half_n + i] = low_cut_filter[i];
     }
-    low_cut_filter[filter_length_half] = center_val + 1.0;
 
-    // Nuttall 窓適用
-    let nuttall = nuttall_window(filter_length);
-    for i in 0..filter_length {
-        low_cut_filter[i] *= nuttall[i];
+    // Shift remaining left by (N-1)/2
+    for i in 0..n {
+        low_cut_filter[i] = low_cut_filter[i + half_n];
     }
+    // Zero out the space left after shifting
+    for i in n..fft_size - half_n {
+        low_cut_filter[i] = 0.0;
+    }
+
+    // Add delta (high-pass = delta - low-pass)
+    low_cut_filter[0] += 1.0;
 
     low_cut_filter
 }
 
-/// Nuttall 窓ベースのバンドパスフィルタリングで帯域信号を取得
+/// Nuttall 窓ベースのローパスフィルタリングで帯域信号を取得
+/// C++ WORLD の GetFilteredSignal() に準拠
 fn get_filtered_signal(
     half_avg_len: usize,
     fft_size: usize,
     y_spectrum: &[Complex64],
     y_length: usize,
 ) -> Vec<f64> {
-    let filter_length = 2 * half_avg_len + 1;
+    // C++: NuttallWindow(half_average_length * 4, low_pass_filter)
+    let filter_length = half_avg_len * 4;
     let nuttall = nuttall_window(filter_length);
 
     let mut low_pass = vec![0.0; fft_size];
-    let sum: f64 = nuttall.iter().sum();
     for i in 0..filter_length {
-        low_pass[i] = nuttall[i] / sum;
+        low_pass[i] = nuttall[i];
     }
 
     let filter_spectrum = forward_real_fft(&low_pass, fft_size);
@@ -195,16 +213,14 @@ fn get_filtered_signal(
         filtered_spectrum[i] = filtered_spectrum[fft_size - i].conj();
     }
 
-    // IFFTでフィルタ済み信号に変換
-    let mut output = inverse_real_fft(&filtered_spectrum[..half], fft_size);
-    output.truncate(y_length);
+    let output = inverse_real_fft(&filtered_spectrum[..half], fft_size);
 
-    // 位相シフト補正
-    let delay = half_avg_len;
+    // C++: index_bias = half_average_length * 2
+    let delay = half_avg_len * 2;
     let mut result = vec![0.0; y_length];
     for i in 0..y_length {
         let idx = i + delay;
-        if idx < y_length {
+        if idx < output.len() {
             result[i] = output[idx];
         }
     }
@@ -274,10 +290,10 @@ fn zero_crossing_engine(x: &[f64], fs: i32) -> (Vec<f64>, Vec<f64>) {
     (interval_locations, intervals)
 }
 
-/// F0 候補とスコアの計算
+/// F0 候補とスコアの計算（C++ WORLD の GetF0CandidateContour + GetF0CandidateContourSub に準拠）
 fn get_f0_candidate_contour(
     zero_crossings: &ZeroCrossings,
-    _boundary_f0: f64,
+    boundary_f0: f64,
     _actual_fs: f64,
     temporal_positions: &[f64],
     f0_length: usize,
@@ -297,7 +313,6 @@ fn get_f0_candidate_contour(
         return;
     }
 
-    // 各ゼロクロッシングタイプの F0 を temporal_positions に補間
     let mut interp_neg = vec![0.0; f0_length];
     let mut interp_pos = vec![0.0; f0_length];
     let mut interp_peak = vec![0.0; f0_length];
@@ -328,26 +343,28 @@ fn get_f0_candidate_contour(
         &mut interp_dip,
     );
 
+    // C++ GetF0CandidateContourSub: 常に4値の平均、スコアは/3.0
+    let f0_floor = boundary_f0 / 2.0;
+    let f0_ceil = boundary_f0;
     for i in 0..f0_length {
-        let values = [interp_neg[i], interp_pos[i], interp_peak[i], interp_dip[i]];
-        let n_valid = values.iter().filter(|&&v| v > 0.0).count();
-        if n_valid < 2 {
-            continue;
+        let mean = (interp_neg[i] + interp_pos[i] + interp_peak[i] + interp_dip[i]) / 4.0;
+
+        // C++: スコア = sqrt(sum_of_squared_dev / 3.0)
+        let score = ((interp_neg[i] - mean).powi(2)
+            + (interp_pos[i] - mean).powi(2)
+            + (interp_peak[i] - mean).powi(2)
+            + (interp_dip[i] - mean).powi(2))
+            / 3.0;
+        let score = score.sqrt();
+
+        // C++: boundary_f0 による範囲フィルタリング
+        if mean > f0_ceil || mean < f0_floor {
+            f0_candidate[i] = 0.0;
+            f0_score[i] = MAXIMUM_VALUE;
+        } else {
+            f0_candidate[i] = mean;
+            f0_score[i] = score;
         }
-
-        let mean = values.iter().filter(|&&v| v > 0.0).sum::<f64>() / n_valid as f64;
-
-        // スコア = 4種の標準偏差 / 平均値
-        let var = values
-            .iter()
-            .filter(|&&v| v > 0.0)
-            .map(|&v| (v - mean).powi(2))
-            .sum::<f64>()
-            / n_valid as f64;
-        let score = var.sqrt() / mean;
-
-        f0_candidate[i] = mean;
-        f0_score[i] = score;
     }
 }
 
@@ -418,126 +435,167 @@ fn get_best_f0_contour(
     best_f0
 }
 
-/// 後処理 Step 1: allowed_range を超えるジャンプ除去
-fn fix_step1(f0: &mut [f64], allowed_range: f64) {
-    let n = f0.len();
-    for i in 1..n {
-        if f0[i] == 0.0 {
-            continue;
-        }
-        if f0[i - 1] == 0.0 {
-            continue;
-        }
-        let ratio = f0[i] / f0[i - 1];
-        if ratio < 1.0 - allowed_range || ratio > 1.0 + allowed_range {
-            f0[i] = 0.0;
-        }
-    }
-}
-
-/// 後処理 Step 2: 短い有声区間の除去
-fn fix_step2(f0: &mut [f64], _allowed_range: f64) {
-    let n = f0.len();
-    if n < 3 {
-        return;
-    }
-
-    // 孤立した有声フレーム（前後が無声）を除去
-    for i in 1..n - 1 {
-        if f0[i] != 0.0 && f0[i - 1] == 0.0 && f0[i + 1] == 0.0 {
-            f0[i] = 0.0;
-        }
-    }
-    // 先頭・末尾のチェック
-    if n >= 2 && f0[0] != 0.0 && f0[1] == 0.0 {
-        f0[0] = 0.0;
-    }
-    if n >= 2 && f0[n - 1] != 0.0 && f0[n - 2] == 0.0 {
-        f0[n - 1] = 0.0;
-    }
-}
-
-/// 後処理 Step 3: 後方→前方に候補修正
-fn fix_step3(
-    f0: &mut [f64],
-    f0_candidates: &[Vec<f64>],
-    f0_scores: &[Vec<f64>],
+/// C++ WORLD 準拠の後処理パイプライン
+fn fix_f0_contour(
+    frame_period: f64,
     number_of_bands: usize,
+    f0_candidates: &[Vec<f64>],
+    _f0_scores: &[Vec<f64>],
+    best_f0_contour: &[f64],
+    f0_length: usize,
+    f0_floor: f64,
     allowed_range: f64,
-) {
-    let n = f0.len();
-    for i in (1..n).rev() {
-        if f0[i] == 0.0 && f0[i - 1] != 0.0 {
-            let best = select_best_f0(
-                f0[i - 1],
-                f0_candidates,
-                f0_scores,
-                i,
-                number_of_bands,
-                allowed_range,
-            );
-            if best != 0.0 {
-                f0[i] = best;
+    temporal_positions: &mut Vec<f64>,
+) -> (Vec<f64>, Vec<f64>) {
+    let voice_range_minimum =
+        (0.5 + 1000.0 / frame_period / f0_floor) as usize * 2 + 1;
+
+    if f0_length <= voice_range_minimum {
+        return (temporal_positions.clone(), best_f0_contour.to_vec());
+    }
+
+    let mut f0_step1 = vec![0.0; f0_length];
+    let mut f0_step2 = vec![0.0; f0_length];
+
+    // Step 1: allowed_range を超えるジャンプ除去
+    {
+        let mut f0_base = vec![0.0; f0_length];
+        for i in voice_range_minimum..f0_length.saturating_sub(voice_range_minimum) {
+            f0_base[i] = best_f0_contour[i];
+        }
+        for i in 0..voice_range_minimum {
+            f0_step1[i] = 0.0;
+        }
+        for i in voice_range_minimum..f0_length {
+            f0_step1[i] = if ((f0_base[i] - f0_base[i - 1]) / (SAFE_GUARD_MINIMUM + f0_base[i]))
+                .abs()
+                < allowed_range
+            {
+                f0_base[i]
+            } else {
+                0.0
+            };
+        }
+    }
+
+    // Step 2: 有声区間窓内に無声があれば除去
+    {
+        for i in 0..f0_length {
+            f0_step2[i] = f0_step1[i];
+        }
+        let center = (voice_range_minimum - 1) / 2;
+        for i in center..f0_length.saturating_sub(center) {
+            let mut all_voiced = true;
+            for j in 0..=center * 2 {
+                let idx = i + j - center;
+                if idx < f0_length && f0_step1[idx] == 0.0 {
+                    all_voiced = false;
+                    break;
+                }
+            }
+            if !all_voiced {
+                f0_step2[i] = 0.0;
             }
         }
     }
-}
 
-/// 後処理 Step 4: 前方→後方に候補修正
-fn fix_step4(
-    f0: &mut [f64],
-    f0_candidates: &[Vec<f64>],
-    f0_scores: &[Vec<f64>],
-    number_of_bands: usize,
-    allowed_range: f64,
-) {
-    let n = f0.len();
-    for i in 0..n - 1 {
-        if f0[i] == 0.0 && f0[i + 1] != 0.0 {
-            let best = select_best_f0(
-                f0[i + 1],
-                f0_candidates,
-                f0_scores,
-                i,
-                number_of_bands,
-                allowed_range,
-            );
-            if best != 0.0 {
-                f0[i] = best;
-            }
+    // 有声区間の境界を検出
+    let mut positive_index = Vec::new();
+    let mut negative_index = Vec::new();
+    for i in 1..f0_length {
+        if f0_step2[i] == 0.0 && f0_step2[i - 1] != 0.0 {
+            negative_index.push(i - 1);
+        } else if f0_step2[i - 1] == 0.0 && f0_step2[i] != 0.0 {
+            positive_index.push(i);
         }
     }
+
+    // Step 3: 有声→無声の遷移から前方へ候補修正
+    let mut f0_step3 = f0_step2.clone();
+    for ni in 0..negative_index.len() {
+        let limit = if ni == negative_index.len() - 1 {
+            f0_length - 1
+        } else {
+            negative_index[ni + 1]
+        };
+        let mut j = negative_index[ni];
+        while j < limit {
+            let best = select_best_f0(
+                f0_step3[j],
+                f0_step3[j.saturating_sub(1)],
+                f0_candidates,
+                number_of_bands,
+                j + 1,
+                allowed_range,
+            );
+            f0_step3[j + 1] = best;
+            if best == 0.0 {
+                break;
+            }
+            j += 1;
+        }
+    }
+
+    // Step 4: 無声→有声の遷移から後方へ候補修正
+    let mut f0_step4 = f0_step3.clone();
+    for pi in (0..positive_index.len()).rev() {
+        let limit = if pi == 0 { 1 } else { positive_index[pi - 1] };
+        let mut j = positive_index[pi];
+        while j > limit {
+            let best = select_best_f0(
+                f0_step4[j],
+                f0_step4[(j + 1).min(f0_length - 1)],
+                f0_candidates,
+                number_of_bands,
+                j - 1,
+                allowed_range,
+            );
+            f0_step4[j - 1] = best;
+            if best == 0.0 {
+                break;
+            }
+            j -= 1;
+        }
+    }
+
+    (temporal_positions.clone(), f0_step4)
 }
 
-/// 指定インデックスの候補から、基準 F0 に近い最良候補を選択
+/// C++ WORLD 準拠の候補選択
+/// reference_f0 = (current_f0 * 3 - past_f0) / 2 で外挿した基準値に最も近い候補を選ぶ
 fn select_best_f0(
-    reference_f0: f64,
+    current_f0: f64,
+    past_f0: f64,
     f0_candidates: &[Vec<f64>],
-    f0_scores: &[Vec<f64>],
-    index: usize,
     number_of_bands: usize,
+    target_index: usize,
     allowed_range: f64,
 ) -> f64 {
-    let mut best_f0 = 0.0;
-    let mut best_score = MAXIMUM_VALUE;
+    let reference_f0 = (current_f0 * 3.0 - past_f0) / 2.0;
 
-    for j in 0..number_of_bands {
-        if index >= f0_candidates[j].len() {
-            continue;
+    let mut best_f0 = f0_candidates[0]
+        .get(target_index)
+        .copied()
+        .unwrap_or(0.0);
+    let mut minimum_error = (reference_f0 - best_f0).abs();
+
+    for j in 1..number_of_bands {
+        let candidate = f0_candidates[j]
+            .get(target_index)
+            .copied()
+            .unwrap_or(0.0);
+        let current_error = (reference_f0 - candidate).abs();
+        if current_error < minimum_error {
+            minimum_error = current_error;
+            best_f0 = candidate;
         }
-        let candidate = f0_candidates[j][index];
-        if candidate == 0.0 {
-            continue;
-        }
-        let ratio = candidate / reference_f0;
-        if ratio >= 1.0 - allowed_range && ratio <= 1.0 + allowed_range
-            && f0_scores[j][index] < best_score {
-                best_score = f0_scores[j][index];
-                best_f0 = candidate;
-            }
     }
 
-    best_f0
+    if (1.0 - best_f0 / reference_f0).abs() > allowed_range {
+        0.0
+    } else {
+        best_f0
+    }
 }
 
 impl F0Estimator for Dio {

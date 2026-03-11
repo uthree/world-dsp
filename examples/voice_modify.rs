@@ -1,7 +1,7 @@
 /// WORLD vocoder を使った音声加工デモ
 ///
 /// 使い方:
-///   cargo run --example voice_modify -- <input.wav> <output.wav> [mode] [param]
+///   cargo run --example voice_modify -- <input.wav> <output.wav> <mode> [param] [--f0 METHOD]
 ///
 /// モード:
 ///   pitch <semitones>   — ピッチシフト（半音単位、例: +3, -5）
@@ -9,20 +9,27 @@
 ///   whisper             — ウィスパーボイス（F0 を 0 にして非周期成分のみ）
 ///   gender <ratio>      — 性別変換（スペクトル包絡シフト、例: 0.8=低く, 1.2=高く）
 ///
+/// F0 推定手法（--f0 オプション、デフォルト: yin）:
+///   yin      — YIN（高速・リアルタイム向き）
+///   harvest  — Harvest（高精度だが低速）
+///   dio      — DIO（高速・安定）
+///
 /// 例:
 ///   cargo run --example voice_modify -- input.wav output.wav pitch 5
-///   cargo run --example voice_modify -- input.wav output.wav robot
-///   cargo run --example voice_modify -- input.wav output.wav whisper
-///   cargo run --example voice_modify -- input.wav output.wav gender 0.8
+///   cargo run --example voice_modify -- input.wav output.wav pitch 5 --f0 harvest
+///   cargo run --example voice_modify -- input.wav output.wav robot --f0 dio
 use std::env;
 use std::process;
 
-use world_dsp::{CheapTrick, D4C, F0Estimator, Harvest, Synthesizer};
+use world_dsp::{CheapTrick, D4C, Dio, F0Estimator, Harvest, Synthesizer, Yin};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 4 {
-        eprintln!("Usage: {} <input.wav> <output.wav> <mode> [param]", args[0]);
+        eprintln!(
+            "Usage: {} <input.wav> <output.wav> <mode> [param] [--f0 yin|harvest|dio]",
+            args[0]
+        );
         eprintln!("Modes: pitch <semitones> | robot | whisper | gender <ratio>");
         process::exit(1);
     }
@@ -30,6 +37,14 @@ fn main() {
     let input_path = &args[1];
     let output_path = &args[2];
     let mode = &args[3];
+
+    // --f0 オプションの解析
+    let f0_method = args
+        .iter()
+        .position(|s| s == "--f0")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.as_str())
+        .unwrap_or("yin");
 
     // WAV 読み込み
     let (samples, fs) = read_wav(input_path);
@@ -40,10 +55,27 @@ fn main() {
         samples.len() as f64 / fs as f64
     );
 
-    // F0 推定（Harvest）
-    eprintln!("Estimating F0 with Harvest...");
-    let harvest = Harvest::new(fs);
-    let (temporal_positions, f0) = harvest.estimate(&samples);
+    // F0 推定
+    let estimator: Box<dyn F0Estimator> = match f0_method {
+        "yin" => {
+            eprintln!("Estimating F0 with YIN...");
+            Box::new(Yin::new(fs))
+        }
+        "harvest" => {
+            eprintln!("Estimating F0 with Harvest...");
+            Box::new(Harvest::new(fs))
+        }
+        "dio" => {
+            eprintln!("Estimating F0 with DIO...");
+            Box::new(Dio::new(fs))
+        }
+        _ => {
+            eprintln!("Unknown F0 method: {}", f0_method);
+            eprintln!("Available: yin, harvest, dio");
+            process::exit(1);
+        }
+    };
+    let (temporal_positions, f0) = estimator.estimate(&samples);
 
     // スペクトル包絡推定（CheapTrick）
     eprintln!("Estimating spectral envelope with CheapTrick...");
@@ -135,7 +167,7 @@ fn main() {
 
     // 合成
     eprintln!("Synthesizing...");
-    let synth = Synthesizer::new(harvest.frame_period, fs, fft_size);
+    let synth = Synthesizer::new(estimator.frame_period(), fs, fft_size);
     let y = synth.synthesize(&f0_modified, &spectrogram_modified, &aperiodicity);
 
     // WAV 書き出し

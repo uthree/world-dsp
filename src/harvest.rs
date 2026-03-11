@@ -33,9 +33,8 @@ pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
         .map(|i| adjusted_f0_floor * (2.0_f64).powf(i as f64 / channels_in_octave))
         .collect();
 
-    // 各チャンネルのF0候補とスコア
+    // 各チャンネルのF0候補
     let mut f0_candidates = vec![vec![0.0; f0_length]; number_of_channels];
-    let mut f0_scores = vec![vec![MAXIMUM_VALUE; f0_length]; number_of_channels];
 
     for ratio_idx in 0..n_ratios {
         let decimation_ratio = decimation_ratios[ratio_idx];
@@ -48,8 +47,10 @@ pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
         };
         let y_length = y.len();
 
+        // C++: fft_size はフィルタ長を考慮して計算
+        let max_filter_half = matlab_round(actual_fs as f64 / adjusted_f0_floor * 2.0) as usize;
         let fft_size =
-            get_suitable_fft_size((actual_fs as f64 / CUTOFF + 1.0) as usize * 4 + y_length);
+            get_suitable_fft_size(y_length + max_filter_half * 2 + 1);
 
         let y_spectrum = get_spectrum_for_estimation(&y, y_length, actual_fs, fft_size);
 
@@ -57,24 +58,18 @@ pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
         let min_freq = actual_fs as f64 / 2.0 / 12.0;
         let max_freq = actual_fs as f64 / 2.0 * 0.9;
 
-        let channel_results: Vec<(usize, Vec<f64>, Vec<f64>)> = (0..number_of_channels)
+        let channel_results: Vec<(usize, Vec<f64>)> = (0..number_of_channels)
             .into_par_iter()
             .filter_map(|ch| {
                 let bf0 = boundary_f0_list[ch];
                 if bf0 < min_freq || bf0 > max_freq {
                     return None;
                 }
-                let half_avg_len = (actual_fs as f64 / bf0 / 2.0 + 0.5) as usize;
-                if half_avg_len < 1 {
-                    return None;
-                }
-
                 let filtered_signal =
-                    get_filtered_signal(half_avg_len, fft_size, &y_spectrum, y_length);
+                    get_filtered_signal(bf0, fft_size, actual_fs as f64, &y_spectrum, y_length);
                 let zero_crossings = get_four_zero_crossing_intervals(&filtered_signal, actual_fs);
 
                 let mut candidates = vec![0.0; f0_length];
-                let mut scores = vec![0.0; f0_length];
                 get_f0_candidate_contour(
                     &zero_crossings,
                     bf0,
@@ -82,20 +77,18 @@ pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
                     &temporal_positions,
                     f0_length,
                     &mut candidates,
-                    &mut scores,
                 );
-                Some((ch, candidates, scores))
+                Some((ch, candidates))
             })
             .collect();
 
-        for (ch, candidates, scores) in channel_results {
+        for (ch, candidates) in channel_results {
             f0_candidates[ch] = candidates;
-            f0_scores[ch] = scores;
         }
     }
 
-    // 最良候補選択
-    let mut raw_f0 = get_best_f0_contour(&f0_candidates, &f0_scores, f0_length, number_of_channels);
+    // 最良候補選択: 最も多くのチャンネルが一致する F0 を選ぶ
+    let mut raw_f0 = get_best_f0_from_candidates(&f0_candidates, f0_length, number_of_channels);
 
     // F0 軌跡の修正
     fix_f0_contour(&mut raw_f0, f0_length);
@@ -145,101 +138,77 @@ fn get_decimation_ratios(f0_floor: f64, fs: i32) -> Vec<i32> {
     ratios
 }
 
-/// ローカットフィルタを適用したスペクトルを取得
+/// スペクトルを取得（C++ WORLD Harvest の GetWaveformAndSpectrum に準拠）
+/// Harvest は DIO と異なりローカットフィルタを適用しない。DC 除去のみ。
 fn get_spectrum_for_estimation(
     y: &[f64],
     y_length: usize,
-    actual_fs: i32,
+    _actual_fs: i32,
     fft_size: usize,
 ) -> Vec<Complex64> {
     let mut y_padded = vec![0.0; fft_size];
     for i in 0..y_length.min(fft_size) {
         y_padded[i] = y[i];
     }
-    let y_spectrum = forward_real_fft(&y_padded, fft_size);
 
-    let low_cut_filter = design_low_cut_filter(actual_fs, fft_size);
-    let filter_spectrum = forward_real_fft(&low_cut_filter, fft_size);
+    // DC 成分除去
+    let mean_y: f64 = y_padded[..y_length].iter().sum::<f64>() / y_length as f64;
+    for i in 0..y_length {
+        y_padded[i] -= mean_y;
+    }
 
-    let mut result = vec![Complex64::new(0.0, 0.0); fft_size];
-    let half = fft_size / 2 + 1;
-    for i in 0..half {
-        result[i] = y_spectrum[i] * filter_spectrum[i];
-    }
-    for i in half..fft_size {
-        result[i] = result[fft_size - i].conj();
-    }
-    result
+    forward_real_fft(&y_padded, fft_size)
 }
 
-/// ローカットフィルタ設計
-fn design_low_cut_filter(actual_fs: i32, fft_size: usize) -> Vec<f64> {
-    let filter_length_half = matlab_round(actual_fs as f64 / CUTOFF * 2.0) as usize;
-    let filter_length = 2 * filter_length_half + 1;
-    let mut low_cut_filter = vec![0.0; fft_size];
 
-    for i in 1..=filter_length_half {
-        low_cut_filter[filter_length_half + i] =
-            0.5 - 0.5 * (2.0 * PI * i as f64 / (filter_length as f64 - 1.0)).cos();
-        low_cut_filter[filter_length_half - i] = low_cut_filter[filter_length_half + i];
-    }
-
-    let sum_of_amplitude: f64 = low_cut_filter.iter().sum();
-    if sum_of_amplitude > 0.0 {
-        for i in 0..filter_length {
-            low_cut_filter[i] /= sum_of_amplitude;
-        }
-    }
-
-    let center_val = low_cut_filter[filter_length_half];
-    for i in 0..filter_length {
-        low_cut_filter[i] = -low_cut_filter[i];
-    }
-    low_cut_filter[filter_length_half] = center_val + 1.0;
-
-    let nuttall = nuttall_window(filter_length);
-    for i in 0..filter_length {
-        low_cut_filter[i] *= nuttall[i];
-    }
-
-    low_cut_filter
-}
-
-/// バンドパスフィルタリング
+/// バンドパスフィルタリング（C++ WORLD Harvest の GetFilteredSignal に準拠）
+/// DIO のローパスフィルタと異なり、Nuttall 窓にコサイン変調を適用してバンドパスを構成する
 fn get_filtered_signal(
-    half_avg_len: usize,
+    boundary_f0: f64,
     fft_size: usize,
+    fs: f64,
     y_spectrum: &[Complex64],
     y_length: usize,
 ) -> Vec<f64> {
-    let filter_length = 2 * half_avg_len + 1;
+    // C++: filter_length_half = matlab_round(fs / boundary_f0 * 2.0)
+    let filter_length_half = matlab_round(fs / boundary_f0 * 2.0) as usize;
+    let filter_length = filter_length_half * 2 + 1;
+
     let nuttall = nuttall_window(filter_length);
 
-    let mut low_pass = vec![0.0; fft_size];
-    let sum: f64 = nuttall.iter().sum();
+    let mut band_pass_filter = vec![0.0; fft_size];
+    // Nuttall 窓 × コサイン変調でバンドパスフィルタを構成
     for i in 0..filter_length {
-        low_pass[i] = nuttall[i] / sum;
+        let k = i as i64 - filter_length_half as i64;
+        band_pass_filter[i] =
+            nuttall[i] * (2.0 * PI * boundary_f0 * k as f64 / fs).cos();
     }
 
-    let filter_spectrum = forward_real_fft(&low_pass, fft_size);
+    let filter_spectrum = forward_real_fft(&band_pass_filter, fft_size);
 
     let half = fft_size / 2 + 1;
-    let mut filtered_spectrum = vec![Complex64::new(0.0, 0.0); fft_size];
+    // 複素数乗算（C++ 準拠）
+    let mut result_spectrum = vec![Complex64::new(0.0, 0.0); fft_size];
     for i in 0..half {
-        filtered_spectrum[i] = y_spectrum[i] * filter_spectrum[i];
+        let tmp = y_spectrum[i].re * filter_spectrum[i].re
+            - y_spectrum[i].im * filter_spectrum[i].im;
+        result_spectrum[i].im = y_spectrum[i].re * filter_spectrum[i].im
+            + y_spectrum[i].im * filter_spectrum[i].re;
+        result_spectrum[i].re = tmp;
     }
     for i in half..fft_size {
-        filtered_spectrum[i] = filtered_spectrum[fft_size - i].conj();
+        result_spectrum[i].re = result_spectrum[fft_size - i].re;
+        result_spectrum[i].im = result_spectrum[fft_size - i].im;
     }
 
-    let mut output = inverse_real_fft(&filtered_spectrum[..half], fft_size);
-    output.truncate(y_length);
+    let output = inverse_real_fft(&result_spectrum[..half], fft_size);
 
-    let delay = half_avg_len;
+    // C++: index_bias = filter_length_half + 1
+    let delay = filter_length_half + 1;
     let mut result = vec![0.0; y_length];
     for i in 0..y_length {
         let idx = i + delay;
-        if idx < y_length {
+        if idx < output.len() {
             result[i] = output[idx];
         }
     }
@@ -302,18 +271,17 @@ fn zero_crossing_engine(x: &[f64], fs: i32) -> (Vec<f64>, Vec<f64>) {
     (interval_locations, intervals)
 }
 
+/// C++ WORLD Harvest の GetF0CandidateContour + GetF0CandidateContourSub に準拠
 fn get_f0_candidate_contour(
     zero_crossings: &ZeroCrossings,
-    _boundary_f0: f64,
+    boundary_f0: f64,
     _actual_fs: f64,
     temporal_positions: &[f64],
     f0_length: usize,
     f0_candidate: &mut [f64],
-    f0_score: &mut [f64],
 ) {
     for i in 0..f0_length {
         f0_candidate[i] = 0.0;
-        f0_score[i] = MAXIMUM_VALUE;
     }
 
     if zero_crossings.negative_intervals.len() < 2
@@ -354,24 +322,17 @@ fn get_f0_candidate_contour(
         &mut interp_dip,
     );
 
+    // C++ GetF0CandidateContourSub: 常に4値の平均、boundary_f0 * 0.9~1.1 でフィルタ
+    let upper = boundary_f0 * 1.1;
+    let lower = boundary_f0 * 0.9;
     for i in 0..f0_length {
-        let values = [interp_neg[i], interp_pos[i], interp_peak[i], interp_dip[i]];
-        let n_valid = values.iter().filter(|&&v| v > 0.0).count();
-        if n_valid < 2 {
-            continue;
+        let mean = (interp_neg[i] + interp_pos[i] + interp_peak[i] + interp_dip[i]) / 4.0;
+
+        if mean > upper || mean < lower {
+            f0_candidate[i] = 0.0;
+        } else {
+            f0_candidate[i] = mean;
         }
-
-        let mean = values.iter().filter(|&&v| v > 0.0).sum::<f64>() / n_valid as f64;
-        let var = values
-            .iter()
-            .filter(|&&v| v > 0.0)
-            .map(|&v| (v - mean).powi(2))
-            .sum::<f64>()
-            / n_valid as f64;
-        let score = var.sqrt() / mean;
-
-        f0_candidate[i] = mean;
-        f0_score[i] = score;
     }
 }
 
@@ -412,28 +373,28 @@ fn interp1_safe(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     }
 }
 
-fn get_best_f0_contour(
+/// 複数チャンネルの F0 候補からフレームごとに最良の F0 を選択
+/// 非ゼロ候補の中央値を使用（C++ Harvest の DetectOfficialF0Candidates 相当の簡略版）
+fn get_best_f0_from_candidates(
     f0_candidates: &[Vec<f64>],
-    f0_scores: &[Vec<f64>],
     f0_length: usize,
     number_of_channels: usize,
 ) -> Vec<f64> {
     let mut best_f0 = vec![0.0; f0_length];
 
     for i in 0..f0_length {
-        let mut best_score = MAXIMUM_VALUE;
-        let mut best_idx = 0;
+        let mut voiced: Vec<f64> = Vec::new();
         for j in 0..number_of_channels {
-            if f0_scores[j][i] < best_score {
-                best_score = f0_scores[j][i];
-                best_idx = j;
+            if f0_candidates[j][i] > 0.0 {
+                voiced.push(f0_candidates[j][i]);
             }
         }
-        best_f0[i] = if best_score < MAXIMUM_VALUE {
-            f0_candidates[best_idx][i]
-        } else {
-            0.0
-        };
+        if voiced.is_empty() {
+            continue;
+        }
+        voiced.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // 中央値を使用
+        best_f0[i] = voiced[voiced.len() / 2];
     }
 
     best_f0
