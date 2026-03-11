@@ -18,6 +18,18 @@ pub const CUTOFF: f64 = 50.0;
 pub const MAXIMUM_VALUE: f64 = 100000.0;
 pub const FLOOR_F0_STONEMASK: f64 = 40.0;
 
+/// F0（基本周波数）推定のための共通トレイト
+pub trait F0Estimator {
+    /// F0 を推定する。返り値は (temporal_positions, f0)。
+    fn estimate(&self, x: &[f64]) -> (Vec<f64>, Vec<f64>);
+
+    /// サンプリングレート
+    fn fs(&self) -> i32;
+
+    /// フレーム周期 (ms)
+    fn frame_period(&self) -> f64;
+}
+
 /// CheapTrick スペクトル包絡推定器
 #[derive(Debug, Clone)]
 pub struct CheapTrick {

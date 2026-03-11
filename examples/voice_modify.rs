@@ -17,7 +17,7 @@
 use std::env;
 use std::process;
 
-use world_dsp::{CheapTrick, D4C, Harvest, Synthesizer, get_fft_size_for_cheaptrick};
+use world_dsp::{CheapTrick, D4C, F0Estimator, Harvest, Synthesizer};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -47,7 +47,7 @@ fn main() {
 
     // スペクトル包絡推定（CheapTrick）
     eprintln!("Estimating spectral envelope with CheapTrick...");
-    let fft_size = get_fft_size_for_cheaptrick(fs, 71.0);
+    let fft_size = 2048;
     let ct = CheapTrick::new(fs, fft_size);
     let spectrogram = ct.estimate(&samples, &temporal_positions, &f0);
 
