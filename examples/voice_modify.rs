@@ -149,8 +149,9 @@ fn main() {
                     if src_idx + 1 < spec_len {
                         new_spec[j] = spectrogram_modified[[i, src_idx]] * (1.0 - frac)
                             + spectrogram_modified[[i, src_idx + 1]] * frac;
-                    } else if src_idx < spec_len {
-                        new_spec[j] = spectrogram_modified[[i, src_idx]];
+                    } else {
+                        // 範囲外は末端値で埋める（0 だと ln(0)=-inf で合成が壊れる）
+                        new_spec[j] = spectrogram_modified[[i, spec_len - 1]];
                     }
                 }
                 for j in 0..spec_len {
