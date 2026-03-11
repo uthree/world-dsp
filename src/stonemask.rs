@@ -21,7 +21,7 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
     }
 
     let half_window_length = (1.5 * fs as f64 / initial_f0 + 1.0) as usize;
-    let fft_size = get_suitable_fft_size(((half_window_length * 2 + 1)));
+    let fft_size = get_suitable_fft_size(half_window_length * 2 + 1);
 
     let base_index_raw = matlab_round(current_position * fs as f64);
     let base_index: Vec<i64> = (-(half_window_length as i64)..=half_window_length as i64)

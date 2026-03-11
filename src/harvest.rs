@@ -10,7 +10,7 @@ use crate::stonemask::get_refined_f0;
 ///
 /// DIO より精密な F0 推定を行う。内部で StoneMask 相当のリファインメントを適用する。
 /// 返り値は (temporal_positions, f0) のタプル。
-pub fn harvest(x: &[f64], fs: i32, option: &HarvestOption) -> (Vec<f64>, Vec<f64>) {
+pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
     let f0_length = get_samples_for_dio(fs, x.len(), option.frame_period);
     let mut temporal_positions = vec![0.0; f0_length];
     for i in 0..f0_length {
@@ -494,6 +494,13 @@ fn override_f0_near_steps(f0: &mut [f64], f0_length: usize) {
     }
 }
 
+impl Harvest {
+    /// F0（基本周波数）を推定する
+    pub fn estimate(&self, x: &[f64]) -> (Vec<f64>, Vec<f64>) {
+        harvest(x, self.fs, self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,7 +515,7 @@ mod tests {
             .map(|i| (2.0 * PI * f0_true * i as f64 / fs as f64).sin())
             .collect();
 
-        let option = HarvestOption::new();
+        let option = Harvest::new(fs);
         let (temporal_positions, f0) = harvest(&x, fs, &option);
 
         assert!(!f0.is_empty());

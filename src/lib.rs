@@ -9,11 +9,7 @@ pub mod stonemask;
 pub mod synthesis;
 pub mod yin;
 
-pub use cheaptrick::cheaptrick;
-pub use constant::{CheapTrickOption, D4COption, DioOption, HarvestOption, YinOption};
-pub use d4c::d4c;
-pub use dio::dio;
-pub use harvest::harvest;
+pub use constant::{
+    get_fft_size_for_cheaptrick, CheapTrick, D4C, Dio, Harvest, Synthesizer, Yin,
+};
 pub use stonemask::stonemask;
-pub use synthesis::synthesis;
-pub use yin::yin;

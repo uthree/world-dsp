@@ -9,7 +9,7 @@ use crate::matlab::{decimate, diff, interp1, matlab_round};
 ///
 /// F0（基本周波数）を推定する。DIO は高速で安定した F0 推定を行う。
 /// 返り値は (temporal_positions, f0) のタプル。
-pub fn dio(x: &[f64], fs: i32, option: &DioOption) -> (Vec<f64>, Vec<f64>) {
+pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     let f0_length = get_samples_for_dio(fs, x.len(), option.frame_period);
     let mut temporal_positions = vec![0.0; f0_length];
     for i in 0..f0_length {
@@ -540,6 +540,13 @@ fn select_best_f0(
     best_f0
 }
 
+impl Dio {
+    /// F0（基本周波数）を推定する
+    pub fn estimate(&self, x: &[f64]) -> (Vec<f64>, Vec<f64>) {
+        dio(x, self.fs, self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,7 +561,7 @@ mod tests {
             .map(|i| (2.0 * PI * f0_true * i as f64 / fs as f64).sin())
             .collect();
 
-        let option = DioOption::new();
+        let option = Dio::new(fs);
         let (temporal_positions, f0) = dio(&x, fs, &option);
 
         assert!(!f0.is_empty());

@@ -7,7 +7,7 @@ use crate::constant::*;
 /// de Cheveigné & Kawahara (2002) の YIN アルゴリズムによる F0 推定。
 /// DIO/Harvest より高速で、リアルタイム用途に適する。
 /// 返り値は (temporal_positions, f0) のタプル。
-pub fn yin(x: &[f64], fs: i32, option: &YinOption) -> (Vec<f64>, Vec<f64>) {
+pub fn yin(x: &[f64], fs: i32, option: &Yin) -> (Vec<f64>, Vec<f64>) {
     let f0_length = get_samples_for_dio(fs, x.len(), option.frame_period);
     let temporal_positions: Vec<f64> = (0..f0_length)
         .map(|i| i as f64 * option.frame_period / 1000.0)
@@ -136,6 +136,13 @@ fn parabolic_interpolation(cmndf: &[f64], tau: usize) -> f64 {
     tau as f64 + (s0 - s2) / (2.0 * denom)
 }
 
+impl Yin {
+    /// F0（基本周波数）を推定する
+    pub fn estimate(&self, x: &[f64]) -> (Vec<f64>, Vec<f64>) {
+        yin(x, self.fs, self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,7 +157,7 @@ mod tests {
             .map(|i| (2.0 * PI * f0_true * i as f64 / fs as f64).sin())
             .collect();
 
-        let option = YinOption::new();
+        let option = Yin::new(fs);
         let (temporal_positions, f0) = yin(&x, fs, &option);
 
         assert!(!f0.is_empty());
@@ -182,7 +189,7 @@ mod tests {
         let n_samples = 8000;
         let x = vec![0.0; n_samples];
 
-        let option = YinOption::new();
+        let option = Yin::new(fs);
         let (_tp, f0) = yin(&x, fs, &option);
 
         for &v in &f0 {
@@ -201,7 +208,7 @@ mod tests {
                 .map(|i| (2.0 * PI * f0_true * i as f64 / fs as f64).sin())
                 .collect();
 
-            let option = YinOption::new();
+            let option = Yin::new(fs);
             let (_tp, f0) = yin(&x, fs, &option);
 
             let mid = f0.len() / 2;

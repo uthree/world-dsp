@@ -18,43 +18,53 @@ pub const CUTOFF: f64 = 50.0;
 pub const MAXIMUM_VALUE: f64 = 100000.0;
 pub const FLOOR_F0_STONEMASK: f64 = 40.0;
 
-/// CheapTrick のオプション構造体
+/// CheapTrick スペクトル包絡推定器
 #[derive(Debug, Clone)]
-pub struct CheapTrickOption {
+pub struct CheapTrick {
     pub q1: f64,
     pub f0_floor: f64,
     pub fft_size: usize,
+    pub fs: i32,
 }
 
-impl CheapTrickOption {
-    pub fn new(fs: i32) -> Self {
-        let f0_floor = DEFAULT_F0_FLOOR;
-        let fft_size = get_fft_size_for_cheaptrick(fs, f0_floor);
-        CheapTrickOption {
+impl CheapTrick {
+    pub fn new(fs: i32, fft_size: usize) -> Self {
+        let f0_floor = get_f0_floor_for_cheaptrick(fs, fft_size);
+        CheapTrick {
             q1: CHEAPTRICK_Q1_DEFAULT,
             f0_floor,
             fft_size,
+            fs,
+        }
+    }
+
+    /// fs と f0_floor から fft_size を自動計算して構築する
+    pub fn from_f0_floor(fs: i32, f0_floor: f64) -> Self {
+        let fft_size = get_fft_size_for_cheaptrick(fs, f0_floor);
+        CheapTrick {
+            q1: CHEAPTRICK_Q1_DEFAULT,
+            f0_floor,
+            fft_size,
+            fs,
         }
     }
 }
 
-/// D4C のオプション構造体
+/// D4C 非周期性推定器
 #[derive(Debug, Clone)]
-pub struct D4COption {
+pub struct D4C {
     pub threshold: f64,
+    pub fs: i32,
+    pub fft_size: usize,
 }
 
-impl D4COption {
-    pub fn new() -> Self {
-        D4COption {
+impl D4C {
+    pub fn new(fs: i32, fft_size: usize) -> Self {
+        D4C {
             threshold: THRESHOLD,
+            fs,
+            fft_size,
         }
-    }
-}
-
-impl Default for D4COption {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -69,83 +79,89 @@ pub fn get_f0_floor_for_cheaptrick(fs: i32, fft_size: usize) -> f64 {
     3.0 * fs as f64 / (fft_size as f64 - 3.0)
 }
 
-/// DIO のオプション構造体
+/// DIO ピッチ推定器
 #[derive(Debug, Clone)]
-pub struct DioOption {
+pub struct Dio {
     pub f0_floor: f64,
     pub f0_ceil: f64,
     pub channels_in_octave: f64,
     pub frame_period: f64,
     pub speed: i32,
     pub allowed_range: f64,
+    pub fs: i32,
 }
 
-impl DioOption {
-    pub fn new() -> Self {
-        DioOption {
+impl Dio {
+    pub fn new(fs: i32) -> Self {
+        Dio {
             f0_floor: DEFAULT_F0_FLOOR,
             f0_ceil: DEFAULT_F0_CEIL,
             channels_in_octave: 2.0,
             frame_period: DEFAULT_FRAME_PERIOD,
             speed: 1,
             allowed_range: 0.1,
+            fs,
         }
     }
 }
 
-impl Default for DioOption {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Harvest のオプション構造体
+/// Harvest ピッチ推定器
 #[derive(Debug, Clone)]
-pub struct HarvestOption {
+pub struct Harvest {
     pub f0_floor: f64,
     pub f0_ceil: f64,
     pub frame_period: f64,
+    pub fs: i32,
 }
 
-impl HarvestOption {
-    pub fn new() -> Self {
-        HarvestOption {
+impl Harvest {
+    pub fn new(fs: i32) -> Self {
+        Harvest {
             f0_floor: DEFAULT_F0_FLOOR,
             f0_ceil: DEFAULT_F0_CEIL,
             frame_period: DEFAULT_FRAME_PERIOD,
+            fs,
         }
     }
 }
 
-impl Default for HarvestOption {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// YIN のオプション構造体
+/// YIN ピッチ推定器
 #[derive(Debug, Clone)]
-pub struct YinOption {
+pub struct Yin {
     pub f0_floor: f64,
     pub f0_ceil: f64,
     pub frame_period: f64,
     pub threshold: f64,
+    pub fs: i32,
 }
 
-impl YinOption {
-    pub fn new() -> Self {
-        YinOption {
+impl Yin {
+    pub fn new(fs: i32) -> Self {
+        Yin {
             f0_floor: DEFAULT_F0_FLOOR,
             f0_ceil: DEFAULT_F0_CEIL,
             frame_period: DEFAULT_FRAME_PERIOD,
             threshold: 0.1,
+            fs,
         }
     }
 }
 
-impl Default for YinOption {
-    fn default() -> Self {
-        Self::new()
+/// 波形合成器
+#[derive(Debug, Clone)]
+pub struct Synthesizer {
+    pub frame_period: f64,
+    pub fs: i32,
+    pub fft_size: usize,
+}
+
+impl Synthesizer {
+    pub fn new(frame_period: f64, fs: i32, fft_size: usize) -> Self {
+        Synthesizer {
+            frame_period,
+            fs,
+            fft_size,
+        }
     }
 }
 

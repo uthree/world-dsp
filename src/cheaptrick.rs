@@ -179,7 +179,7 @@ fn cheaptrick_general_body(
 /// * `fs` - サンプリング周波数
 /// * `temporal_positions` - 各フレームの時間位置 (秒)
 /// * `f0` - 各フレームの基本周波数 (Hz)
-/// * `option` - CheapTrickOption
+/// * `option` - CheapTrick
 ///
 /// # Returns
 /// スペクトル包絡 [num_frames x fft_size/2+1]
@@ -188,7 +188,7 @@ pub fn cheaptrick(
     fs: i32,
     temporal_positions: &[f64],
     f0: &[f64],
-    option: &CheapTrickOption,
+    option: &CheapTrick,
 ) -> Array2<f64> {
     let f0_length = f0.len();
     let fft_size = option.fft_size;
@@ -221,4 +221,16 @@ pub fn cheaptrick(
     }
 
     spectrogram
+}
+
+impl CheapTrick {
+    /// スペクトル包絡を推定する
+    pub fn estimate(
+        &self,
+        x: &[f64],
+        temporal_positions: &[f64],
+        f0: &[f64],
+    ) -> Array2<f64> {
+        cheaptrick(x, self.fs, temporal_positions, f0, self)
+    }
 }

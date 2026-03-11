@@ -378,7 +378,7 @@ fn d4c_general_body(
 /// * `temporal_positions` - 各フレームの時間位置 (秒)
 /// * `f0` - 各フレームの基本周波数 (Hz)
 /// * `fft_size` - FFT サイズ
-/// * `option` - D4COption
+/// * `option` - D4C
 ///
 /// # Returns
 /// 非周期性指標 [num_frames x fft_size/2+1] 値域: [0, 1]
@@ -388,7 +388,7 @@ pub fn d4c(
     temporal_positions: &[f64],
     f0: &[f64],
     fft_size: usize,
-    option: &D4COption,
+    option: &D4C,
 ) -> Array2<f64> {
     let f0_length = f0.len();
     let spec_len = fft_size / 2 + 1;
@@ -473,4 +473,16 @@ pub fn d4c(
     }
 
     aperiodicity
+}
+
+impl D4C {
+    /// 非周期性指標を推定する
+    pub fn estimate(
+        &self,
+        x: &[f64],
+        temporal_positions: &[f64],
+        f0: &[f64],
+    ) -> Array2<f64> {
+        d4c(x, self.fs, temporal_positions, f0, self.fft_size, self)
+    }
 }

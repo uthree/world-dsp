@@ -17,7 +17,7 @@
 use std::env;
 use std::process;
 
-use world_dsp::*;
+use world_dsp::{CheapTrick, D4C, Harvest, Synthesizer, get_fft_size_for_cheaptrick};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -42,26 +42,19 @@ fn main() {
 
     // F0 推定（Harvest）
     eprintln!("Estimating F0 with Harvest...");
-    let harvest_option = HarvestOption::new();
-    let (temporal_positions, f0) = harvest(&samples, fs, &harvest_option);
+    let harvest = Harvest::new(fs);
+    let (temporal_positions, f0) = harvest.estimate(&samples);
 
     // スペクトル包絡推定（CheapTrick）
     eprintln!("Estimating spectral envelope with CheapTrick...");
-    let ct_option = CheapTrickOption::new(fs);
-    let fft_size = ct_option.fft_size;
-    let spectrogram = cheaptrick(&samples, fs, &temporal_positions, &f0, &ct_option);
+    let fft_size = get_fft_size_for_cheaptrick(fs, 71.0);
+    let ct = CheapTrick::new(fs, fft_size);
+    let spectrogram = ct.estimate(&samples, &temporal_positions, &f0);
 
     // 非周期性推定（D4C）
     eprintln!("Estimating aperiodicity with D4C...");
-    let d4c_option = D4COption::new();
-    let aperiodicity = d4c(
-        &samples,
-        fs,
-        &temporal_positions,
-        &f0,
-        fft_size,
-        &d4c_option,
-    );
+    let d4c = D4C::new(fs, fft_size);
+    let aperiodicity = d4c.estimate(&samples, &temporal_positions, &f0);
 
     // パラメータ加工
     let mut f0_modified = f0.clone();
@@ -142,15 +135,8 @@ fn main() {
 
     // 合成
     eprintln!("Synthesizing...");
-    let frame_period = harvest_option.frame_period;
-    let y = synthesis(
-        &f0_modified,
-        &spectrogram_modified,
-        &aperiodicity,
-        frame_period,
-        fs,
-        fft_size,
-    );
+    let synth = Synthesizer::new(harvest.frame_period, fs, fft_size);
+    let y = synth.synthesize(&f0_modified, &spectrogram_modified, &aperiodicity);
 
     // WAV 書き出し
     let output_samples: Vec<f64> = y.to_vec();

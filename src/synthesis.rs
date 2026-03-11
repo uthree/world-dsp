@@ -471,3 +471,15 @@ pub fn synthesis(
 
     Array1::from_vec(y)
 }
+
+impl Synthesizer {
+    /// パラメータから波形を合成する
+    pub fn synthesize(
+        &self,
+        f0: &[f64],
+        spectrogram: &Array2<f64>,
+        aperiodicity: &Array2<f64>,
+    ) -> Array1<f64> {
+        synthesis(f0, spectrogram, aperiodicity, self.frame_period, self.fs, self.fft_size)
+    }
+}
