@@ -7,7 +7,7 @@ use crate::common::*;
 use crate::constant::*;
 use crate::matlab::*;
 
-/// 時間パラメータの準備（F0 補間用の粗い時間軸を生成）。
+/// Prepare temporal parameters (generate coarse time axis for F0 interpolation).
 fn get_temporal_parameters_for_time_base(
     f0: &[f64],
     fs: i32,
@@ -34,7 +34,7 @@ fn get_temporal_parameters_for_time_base(
     (time_axis, coarse_time_axis, coarse_f0, coarse_vuv)
 }
 
-/// パルス位置検出（位相ラッピングによるグロタルパルスの位置を特定）。
+/// Pulse location detection (identify glottal pulse positions via phase wrapping).
 fn get_pulse_locations_for_time_base(
     interpolated_f0: &[f64],
     time_axis: &[f64],
@@ -76,7 +76,7 @@ fn get_pulse_locations_for_time_base(
     )
 }
 
-/// タイムベース計算（F0 補間 → パルス位置検出）。
+/// Time base computation (F0 interpolation → pulse location detection).
 fn get_time_base(
     f0: &[f64],
     fs: i32,
@@ -121,7 +121,7 @@ fn get_time_base(
     )
 }
 
-/// DC 除去フィルタの設計（Hanning ベース）。
+/// DC removal filter design (Hanning-based).
 fn get_dc_remover(fft_size: usize) -> Vec<f64> {
     let mut dc_remover = vec![0.0; fft_size];
     let mut dc_component = 0.0;
@@ -139,9 +139,9 @@ fn get_dc_remover(fft_size: usize) -> Vec<f64> {
     dc_remover
 }
 
-/// スペクトル包絡の時間補間。
+/// Temporal interpolation of spectral envelope.
 ///
-/// 隣接フレーム間で線形補間する。
+/// Linear interpolation between adjacent frames.
 fn get_spectral_envelope(
     current_time: f64,
     frame_period: f64,
@@ -171,9 +171,9 @@ fn get_spectral_envelope(
     spectral_envelope
 }
 
-/// 非周期性比率の時間補間。
+/// Temporal interpolation of aperiodic ratio.
 ///
-/// 隣接フレーム間で線形補間し、安全値クランプと二乗を適用する。
+/// Linear interpolation between adjacent frames, with safe value clamping and squaring.
 fn get_aperiodic_ratio(
     current_time: f64,
     frame_period: f64,
@@ -205,7 +205,7 @@ fn get_aperiodic_ratio(
     aperiodic_spectrum
 }
 
-/// ノイズスペクトル生成。標準正規分布のノイズを FFT する。
+/// Noise spectrum generation. FFT of standard normal noise.
 fn get_noise_spectrum(noise_size: usize, fft_size: usize) -> Vec<num_complex::Complex64> {
     let noise = Array1::random(noise_size, StandardNormal);
     let mean = noise.mean().unwrap_or(0.0);
@@ -218,9 +218,9 @@ fn get_noise_spectrum(noise_size: usize, fft_size: usize) -> Vec<num_complex::Co
     forward_real_fft(&waveform, fft_size)
 }
 
-/// 分数時間シフト付きスペクトル計算。
+/// Spectrum computation with fractional time shift.
 ///
-/// パルス位置のサブサンプル精度を反映するため、スペクトルに位相回転を適用する。
+/// Applies phase rotation to the spectrum to reflect sub-sample precision of pulse positions.
 fn get_spectrum_with_fractional_time_shift(
     spectrum: &mut [num_complex::Complex64],
     fft_size: usize,
@@ -237,7 +237,7 @@ fn get_spectrum_with_fractional_time_shift(
     }
 }
 
-/// DC 成分除去。
+/// DC component removal.
 fn remove_dc_component(
     periodic_response: &[f64],
     fft_size: usize,
@@ -256,10 +256,10 @@ fn remove_dc_component(
     }
 }
 
-/// 周期成分応答の計算。
+/// Periodic component response computation.
 ///
-/// スペクトル包絡の周期成分（1 - 非周期比率）から最小位相スペクトルを構築し、
-/// 時間領域応答を返す。
+/// Constructs minimum phase spectrum from the periodic component (1 - aperiodic ratio)
+/// of the spectral envelope and returns time-domain response.
 fn get_periodic_response(
     fft_size: usize,
     spectrum: &[f64],
@@ -305,9 +305,9 @@ fn get_periodic_response(
     periodic_response
 }
 
-/// 非周期成分応答の計算。
+/// Aperiodic component response computation.
 ///
-/// スペクトル包絡の非周期成分にノイズスペクトルを乗じて時間領域応答を返す。
+/// Multiplies the aperiodic component of the spectral envelope by noise spectrum and returns time-domain response.
 fn get_aperiodic_response(
     noise_size: usize,
     fft_size: usize,
@@ -344,7 +344,7 @@ fn get_aperiodic_response(
     aperiodic_response
 }
 
-/// 1フレームセグメント生成（周期成分 + 非周期成分）。
+/// Single-frame segment generation (periodic + aperiodic components).
 fn get_one_frame_segment(
     current_vuv: f64,
     noise_size: usize,
@@ -395,21 +395,21 @@ fn get_one_frame_segment(
     response
 }
 
-/// 波形合成（ボコーダー）。
+/// Waveform synthesis (vocoder).
 ///
-/// F0・スペクトル包絡・非周期性指標から音声波形を合成する。
-/// パルス位置ごとの応答を rayon で並列計算し、重畳加算で出力波形を構築する。
+/// Synthesizes speech waveform from F0, spectral envelope, and aperiodicity.
+/// Computes per-pulse responses in parallel using rayon and constructs output waveform via overlap-add.
 ///
 /// # Arguments
-/// * `f0` - 基本周波数列 (Hz), 長さ `num_frames`。無声フレームは 0.0
-/// * `spectrogram` - スペクトル包絡 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
-/// * `aperiodicity` - 非周期性指標 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
-/// * `frame_period` - フレーム周期 (ms)
-/// * `fs` - サンプリング周波数 (Hz)
-/// * `fft_size` - FFT サイズ
+/// * `f0` - Fundamental frequency sequence (Hz), length `num_frames`. Unvoiced frames are 0.0
+/// * `spectrogram` - Spectral envelope `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
+/// * `aperiodicity` - Aperiodicity `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
+/// * `frame_period` - Frame period (ms)
+/// * `fs` - Sampling frequency (Hz)
+/// * `fft_size` - FFT size
 ///
 /// # Returns
-/// 合成波形 `Array1<f64>` shape: `[y_length]`。
+/// Synthesized waveform `Array1<f64>` shape: `[y_length]`.
 /// `y_length = floor((num_frames - 1) * frame_period / 1000 * fs) + 1`
 pub fn synthesis(
     f0: &[f64],
@@ -466,7 +466,7 @@ pub fn synthesis(
         })
         .collect();
 
-    // 重畳加算（逐次処理）
+    // Overlap-add (sequential processing)
     for i in 0..number_of_pulses {
         let offset = pulse_locations_index[i] as i64 - fft_size as i64 / 2 + 1;
         let lower_limit = if offset < 0 { (-offset) as usize } else { 0 };
@@ -482,15 +482,15 @@ pub fn synthesis(
 }
 
 impl Synthesizer {
-    /// パラメータから波形を合成する。
+    /// Synthesize waveform from parameters.
     ///
     /// # Arguments
-    /// * `f0` - 基本周波数列 (Hz), 長さ `num_frames`
-    /// * `spectrogram` - スペクトル包絡 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
-    /// * `aperiodicity` - 非周期性指標 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
+    /// * `f0` - Fundamental frequency sequence (Hz), length `num_frames`
+    /// * `spectrogram` - Spectral envelope `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
+    /// * `aperiodicity` - Aperiodicity `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
     ///
     /// # Returns
-    /// 合成波形 `Array1<f64>` shape: `[y_length]`
+    /// Synthesized waveform `Array1<f64>` shape: `[y_length]`
     pub fn synthesize(
         &self,
         f0: &[f64],

@@ -1,9 +1,9 @@
-/// テスト用 WAV ファイルを生成するヘルパー
+/// Helper to generate test WAV files
 ///
-/// 使い方:
+/// Usage:
 ///   cargo run --example generate_test_wav -- <output.wav> [freq] [duration]
 ///
-/// 例:
+/// Examples:
 ///   cargo run --example generate_test_wav -- test_input.wav 220 2.0
 use std::env;
 
@@ -28,13 +28,13 @@ fn main() {
 
     for i in 0..n_samples {
         let t = i as f64 / fs as f64;
-        // 倍音を含む擬似音声（のこぎり波に近い）
+        // Pseudo-voice with harmonics (similar to sawtooth wave)
         let mut sample = 0.0;
         for h in 1..=6 {
             let amp = 1.0 / h as f64;
             sample += amp * (pi2 * freq * h as f64 * t).sin();
         }
-        // フェードイン・フェードアウト
+        // Fade in / fade out
         let fade = if t < 0.05 {
             t / 0.05
         } else if t > duration - 0.05 {

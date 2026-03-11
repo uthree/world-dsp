@@ -5,20 +5,20 @@ use crate::common::{forward_real_fft, inverse_real_fft, nuttall_window};
 use crate::constant::*;
 use crate::matlab::{decimate, diff, interp1, matlab_round};
 
-/// DIO ピッチ推定。
+/// DIO pitch estimation.
 ///
-/// ゼロクロッシング解析と FFT ベースのバンドパスフィルタリングにより F0 を推定する。
-/// 各帯域の処理は rayon で並列化される。
+/// Estimates F0 using zero-crossing analysis and FFT-based bandpass filtering.
+/// Band processing is parallelized using rayon.
 ///
 /// # Arguments
-/// * `x` - 入力波形（モノラル）
-/// * `fs` - サンプリング周波数 (Hz)
-/// * `option` - DIO パラメータ
+/// * `x` - Input waveform (mono)
+/// * `fs` - Sampling frequency (Hz)
+/// * `option` - DIO parameters
 ///
 /// # Returns
-/// `(temporal_positions, f0)` のタプル。
-/// - `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
-/// - `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`。無声フレームは 0.0
+/// A tuple of `(temporal_positions, f0)`.
+/// - `temporal_positions` - Temporal position of each frame (seconds), length `num_frames`
+/// - `f0` - Fundamental frequency of each frame (Hz), length `num_frames`. Unvoiced frames are 0.0
 pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     let f0_length = get_samples_for_dio(fs, x.len(), option.frame_period);
     let mut temporal_positions = vec![0.0; f0_length];
@@ -29,7 +29,7 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     let decimation_ratio = get_decimation_ratio(option.speed, fs);
     let actual_fs = fs / decimation_ratio;
 
-    // デシメーション
+    // Decimation
     let y = if decimation_ratio != 1 {
         decimate(x, decimation_ratio)
     } else {
@@ -37,12 +37,12 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     };
     let y_length = y.len();
 
-    // バンド数
+    // Number of bands
     let number_of_bands = 1
         + (((option.f0_ceil / option.f0_floor)).ln() / LOG2 * option.channels_in_octave)
             as usize;
 
-    // boundary F0 リスト
+    // boundary F0 list
     let boundary_f0_list: Vec<f64> = (0..number_of_bands)
         .map(|i| option.f0_floor * (2.0_f64).powf((i + 1) as f64 / option.channels_in_octave))
         .collect();
@@ -56,11 +56,11 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
             + (4.0 * (1.0 + actual_fs as f64 / boundary_f0_list[0] / 2.0)) as usize,
     );
 
-    // スペクトル計算（ローカットフィルタ適用済み）
+    // Spectrum computation (with low-cut filter applied)
     let y_spectrum =
         get_spectrum_for_estimation(&y, y_length, actual_fs, fft_size, decimation_ratio);
 
-    // 各帯域の F0 候補とスコアを並列計算
+    // Compute F0 candidates and scores for each band in parallel
     let band_results: Vec<(Vec<f64>, Vec<f64>)> = (0..number_of_bands)
         .into_par_iter()
         .map(|i| {
@@ -90,10 +90,10 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     let f0_candidates: Vec<Vec<f64>> = band_results.iter().map(|(c, _)| c.clone()).collect();
     let f0_scores: Vec<Vec<f64>> = band_results.iter().map(|(_, s)| s.clone()).collect();
 
-    // 最良候補選択
+    // Best candidate selection
     let best_f0 = get_best_f0_contour(&f0_candidates, &f0_scores, f0_length, number_of_bands);
 
-    // C++ WORLD 準拠の後処理
+    // Post-processing pipeline following C++ WORLD
     fix_f0_contour(
         option.frame_period,
         number_of_bands,
@@ -107,17 +107,17 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     )
 }
 
-/// speed パラメータからデシメーション比率を計算する。
+/// Compute decimation ratio from speed parameter.
 fn get_decimation_ratio(speed: i32, fs: i32) -> i32 {
     if speed <= 1 {
         return 1;
     }
     let ratio = speed.min(12);
-    // 確認: actual_fs が妥当か
+    // Check: is actual_fs reasonable
     if fs / ratio < 100 { 1 } else { ratio }
 }
 
-/// ローカットフィルタを適用したスペクトルを取得（C++ WORLD 準拠）
+/// Get spectrum with low-cut filter applied (following C++ WORLD)
 fn get_spectrum_for_estimation(
     y: &[f64],
     y_length: usize,
@@ -130,7 +130,7 @@ fn get_spectrum_for_estimation(
         y_padded[i] = y[i];
     }
 
-    // C++: DC 成分除去
+    // C++: DC removal
     let mean_y: f64 = y_padded[..y_length].iter().sum::<f64>() / y_length as f64;
     for i in 0..y_length {
         y_padded[i] -= mean_y;
@@ -138,13 +138,13 @@ fn get_spectrum_for_estimation(
 
     let mut y_spectrum = forward_real_fft(&y_padded, fft_size);
 
-    // ローカットフィルタ設計・適用
+    // Low-cut filter design and application
     let low_cut_filter = design_low_cut_filter(actual_fs, fft_size);
     let filter_spectrum = forward_real_fft(&low_cut_filter, fft_size);
 
     let half = fft_size / 2 + 1;
     for i in 0..half {
-        // 複素数乗算
+        // Complex multiplication
         let tmp = y_spectrum[i].re * filter_spectrum[i].re
             - y_spectrum[i].im * filter_spectrum[i].im;
         y_spectrum[i].im = y_spectrum[i].re * filter_spectrum[i].im
@@ -155,7 +155,7 @@ fn get_spectrum_for_estimation(
     y_spectrum
 }
 
-/// ローカットフィルタ設計（C++ WORLD の DesignLowCutFilter に準拠）
+/// Low-cut filter design (following C++ WORLD's DesignLowCutFilter)
 fn design_low_cut_filter(actual_fs: i32, fft_size: usize) -> Vec<f64> {
     let cutoff_in_sample = matlab_round(actual_fs as f64 / CUTOFF);
     let n = (cutoff_in_sample * 2 + 1) as usize;
@@ -196,8 +196,8 @@ fn design_low_cut_filter(actual_fs: i32, fft_size: usize) -> Vec<f64> {
     low_cut_filter
 }
 
-/// Nuttall 窓ベースのローパスフィルタリングで帯域信号を取得
-/// C++ WORLD の GetFilteredSignal() に準拠
+/// Get bandpass signal using Nuttall window-based lowpass filtering
+/// (following C++ WORLD's GetFilteredSignal)
 fn get_filtered_signal(
     half_avg_len: usize,
     fft_size: usize,
@@ -249,20 +249,20 @@ struct ZeroCrossings {
     dip_intervals: Vec<f64>,
 }
 
-/// 4種類のゼロクロッシング解析
+/// Four types of zero-crossing analysis
 fn get_four_zero_crossing_intervals(filtered_signal: &[f64], actual_fs: i32) -> ZeroCrossings {
-    // negative→positive (通常のゼロクロッシング)
+    // negative-to-positive (normal zero crossing)
     let (neg_locs, neg_intervals) = zero_crossing_engine(filtered_signal, actual_fs);
 
-    // positive→negative (符号反転)
+    // positive-to-negative (sign inversion)
     let neg_signal: Vec<f64> = filtered_signal.iter().map(|&v| -v).collect();
     let (pos_locs, pos_intervals) = zero_crossing_engine(&neg_signal, actual_fs);
 
-    // peak intervals (微分のゼロクロッシング)
+    // peak intervals (zero crossing of derivative)
     let d = diff(filtered_signal);
     let (peak_locs, peak_intervals) = zero_crossing_engine(&d, actual_fs);
 
-    // dip intervals (微分の符号反転のゼロクロッシング)
+    // dip intervals (zero crossing of inverted derivative)
     let neg_d: Vec<f64> = d.iter().map(|&v| -v).collect();
     let (dip_locs, dip_intervals) = zero_crossing_engine(&neg_d, actual_fs);
 
@@ -278,14 +278,14 @@ fn get_four_zero_crossing_intervals(filtered_signal: &[f64], actual_fs: i32) -> 
     }
 }
 
-/// ゼロクロッシングエンジン：negative→positiveの交差を検出
+/// Zero-crossing engine: detect negative-to-positive crossings
 fn zero_crossing_engine(x: &[f64], fs: i32) -> (Vec<f64>, Vec<f64>) {
     let n = x.len();
     let mut locations = Vec::new();
 
     for i in 0..n - 1 {
         if x[i] * x[i + 1] < 0.0 && x[i] < 0.0 {
-            // 線形補間で正確な位置
+            // Exact position via linear interpolation
             let exact = i as f64 - x[i] / (x[i + 1] - x[i]);
             locations.push(exact / fs as f64);
         }
@@ -301,7 +301,7 @@ fn zero_crossing_engine(x: &[f64], fs: i32) -> (Vec<f64>, Vec<f64>) {
     (interval_locations, intervals)
 }
 
-/// F0 候補とスコアの計算（C++ WORLD の GetF0CandidateContour + GetF0CandidateContourSub に準拠）
+/// F0 candidate and score computation (following C++ WORLD's GetF0CandidateContour + GetF0CandidateContourSub)
 fn get_f0_candidate_contour(
     zero_crossings: &ZeroCrossings,
     boundary_f0: f64,
@@ -354,13 +354,13 @@ fn get_f0_candidate_contour(
         &mut interp_dip,
     );
 
-    // C++ GetF0CandidateContourSub: 常に4値の平均、スコアは/3.0
+    // C++ GetF0CandidateContourSub: always average of 4 values, score divided by 3.0
     let f0_floor = boundary_f0 / 2.0;
     let f0_ceil = boundary_f0;
     for i in 0..f0_length {
         let mean = (interp_neg[i] + interp_pos[i] + interp_peak[i] + interp_dip[i]) / 4.0;
 
-        // C++: スコア = sqrt(sum_of_squared_dev / 3.0)
+        // C++: score = sqrt(sum_of_squared_dev / 3.0)
         let score = ((interp_neg[i] - mean).powi(2)
             + (interp_pos[i] - mean).powi(2)
             + (interp_peak[i] - mean).powi(2)
@@ -368,7 +368,7 @@ fn get_f0_candidate_contour(
             / 3.0;
         let score = score.sqrt();
 
-        // C++: boundary_f0 による範囲フィルタリング
+        // C++: range filtering by boundary_f0
         if mean > f0_ceil || mean < f0_floor {
             f0_candidate[i] = 0.0;
             f0_score[i] = MAXIMUM_VALUE;
@@ -379,7 +379,7 @@ fn get_f0_candidate_contour(
     }
 }
 
-/// 安全な補間（範囲外は0）
+/// Safe interpolation (out-of-range values set to 0)
 fn interp1_safe(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     if x.len() < 2 || y.len() < 2 {
         for v in yi.iter_mut() {
@@ -390,7 +390,7 @@ fn interp1_safe(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     let x_min = x[0];
     let x_max = x[x.len() - 1];
 
-    // 範囲内のインデックスだけ補間
+    // Interpolate only indices within range
     let mut valid_xi = Vec::new();
     let mut valid_idx = Vec::new();
     for (i, &val) in xi.iter().enumerate() {
@@ -418,7 +418,7 @@ fn interp1_safe(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     }
 }
 
-/// 最良 F0 軌跡の選択（全帯域から最小スコア）
+/// Best F0 contour selection (minimum score across all bands)
 fn get_best_f0_contour(
     f0_candidates: &[Vec<f64>],
     f0_scores: &[Vec<f64>],
@@ -446,7 +446,7 @@ fn get_best_f0_contour(
     best_f0
 }
 
-/// C++ WORLD 準拠の後処理パイプライン
+/// Post-processing pipeline following C++ WORLD
 fn fix_f0_contour(
     frame_period: f64,
     number_of_bands: usize,
@@ -468,7 +468,7 @@ fn fix_f0_contour(
     let mut f0_step1 = vec![0.0; f0_length];
     let mut f0_step2 = vec![0.0; f0_length];
 
-    // Step 1: allowed_range を超えるジャンプ除去
+    // Step 1: Remove jumps exceeding allowed_range
     {
         let mut f0_base = vec![0.0; f0_length];
         for i in voice_range_minimum..f0_length.saturating_sub(voice_range_minimum) {
@@ -489,7 +489,7 @@ fn fix_f0_contour(
         }
     }
 
-    // Step 2: 有声区間窓内に無声があれば除去
+    // Step 2: Remove if unvoiced exists within voiced window
     {
         for i in 0..f0_length {
             f0_step2[i] = f0_step1[i];
@@ -510,7 +510,7 @@ fn fix_f0_contour(
         }
     }
 
-    // 有声区間の境界を検出
+    // Detect voiced segment boundaries
     let mut positive_index = Vec::new();
     let mut negative_index = Vec::new();
     for i in 1..f0_length {
@@ -521,7 +521,7 @@ fn fix_f0_contour(
         }
     }
 
-    // Step 3: 有声→無声の遷移から前方へ候補修正
+    // Step 3: Forward candidate correction from voiced-to-unvoiced transitions
     let mut f0_step3 = f0_step2.clone();
     for ni in 0..negative_index.len() {
         let limit = if ni == negative_index.len() - 1 {
@@ -547,7 +547,7 @@ fn fix_f0_contour(
         }
     }
 
-    // Step 4: 無声→有声の遷移から後方へ候補修正
+    // Step 4: Backward candidate correction from unvoiced-to-voiced transitions
     let mut f0_step4 = f0_step3.clone();
     for pi in (0..positive_index.len()).rev() {
         let limit = if pi == 0 { 1 } else { positive_index[pi - 1] };
@@ -572,8 +572,9 @@ fn fix_f0_contour(
     (temporal_positions.clone(), f0_step4)
 }
 
-/// C++ WORLD 準拠の候補選択
-/// reference_f0 = (current_f0 * 3 - past_f0) / 2 で外挿した基準値に最も近い候補を選ぶ
+/// Candidate selection following C++ WORLD.
+/// Select the candidate closest to the reference value extrapolated as
+/// reference_f0 = (current_f0 * 3 - past_f0) / 2
 fn select_best_f0(
     current_f0: f64,
     past_f0: f64,
@@ -643,7 +644,7 @@ mod tests {
         assert!(!f0.is_empty());
         assert_eq!(temporal_positions.len(), f0.len());
 
-        // 中央付近のフレームで F0 が概ね 440Hz であることを確認
+        // Verify F0 is approximately 440Hz near center frames
         let mid = f0.len() / 2;
         let voiced_f0: Vec<f64> = f0[mid - 2..=mid + 2]
             .iter()

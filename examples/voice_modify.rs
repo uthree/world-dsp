@@ -1,20 +1,20 @@
-/// WORLD vocoder を使った音声加工デモ
+/// Voice modification demo using WORLD vocoder
 ///
-/// 使い方:
+/// Usage:
 ///   cargo run --example voice_modify -- <input.wav> <output.wav> <mode> [param] [--f0 METHOD]
 ///
-/// モード:
-///   pitch <semitones>   — ピッチシフト（半音単位、例: +3, -5）
-///   robot               — ロボットボイス（F0 を固定値にする）
-///   whisper             — ウィスパーボイス（F0 を 0 にして非周期成分のみ）
-///   gender <ratio>      — 性別変換（スペクトル包絡シフト、例: 0.8=低く, 1.2=高く）
+/// Modes:
+///   pitch <semitones>   — Pitch shift (in semitones, e.g., +3, -5)
+///   robot               — Robot voice (fix F0 to constant value)
+///   whisper             — Whisper voice (set F0 to 0, aperiodic components only)
+///   gender <ratio>      — Gender conversion (spectral envelope shift, e.g., 0.8=lower, 1.2=higher)
 ///
-/// F0 推定手法（--f0 オプション、デフォルト: yin）:
-///   yin      — YIN（高速・リアルタイム向き）
-///   harvest  — Harvest（高精度だが低速）
-///   dio      — DIO（高速・安定）
+/// F0 estimation method (--f0 option, default: yin):
+///   yin      — YIN (fast, suitable for real-time)
+///   harvest  — Harvest (high accuracy but slow)
+///   dio      — DIO (fast and stable)
 ///
-/// 例:
+/// Examples:
 ///   cargo run --example voice_modify -- input.wav output.wav pitch 5
 ///   cargo run --example voice_modify -- input.wav output.wav pitch 5 --f0 harvest
 ///   cargo run --example voice_modify -- input.wav output.wav robot --f0 dio
@@ -38,7 +38,7 @@ fn main() {
     let output_path = &args[2];
     let mode = &args[3];
 
-    // --f0 オプションの解析
+    // Parse --f0 option
     let f0_method = args
         .iter()
         .position(|s| s == "--f0")
@@ -46,7 +46,7 @@ fn main() {
         .map(|s| s.as_str())
         .unwrap_or("yin");
 
-    // WAV 読み込み
+    // Read WAV
     let (samples, fs) = read_wav(input_path);
     eprintln!(
         "Input: {} samples, {}Hz, {:.2}s",
@@ -55,7 +55,7 @@ fn main() {
         samples.len() as f64 / fs as f64
     );
 
-    // F0 推定
+    // F0 estimation
     let estimator: Box<dyn F0Estimator> = match f0_method {
         "yin" => {
             eprintln!("Estimating F0 with YIN...");
@@ -77,18 +77,18 @@ fn main() {
     };
     let (temporal_positions, f0) = estimator.estimate(&samples);
 
-    // スペクトル包絡推定（CheapTrick）
+    // Spectral envelope estimation (CheapTrick)
     eprintln!("Estimating spectral envelope with CheapTrick...");
     let fft_size = 2048;
     let ct = CheapTrick::new(fs, fft_size);
     let spectrogram = ct.estimate(&samples, &temporal_positions, &f0);
 
-    // 非周期性推定（D4C）
+    // Aperiodicity estimation (D4C)
     eprintln!("Estimating aperiodicity with D4C...");
     let d4c = D4C::new(fs, fft_size);
     let aperiodicity = d4c.estimate(&samples, &temporal_positions, &f0);
 
-    // パラメータ加工
+    // Parameter modification
     let mut f0_modified = f0.clone();
     let mut spectrogram_modified = spectrogram.clone();
 
@@ -132,14 +132,14 @@ fn main() {
             let spec_len = fft_size / 2 + 1;
             let n_frames = f0_modified.len();
 
-            // F0 をシフト
+            // Shift F0
             for v in f0_modified.iter_mut() {
                 if *v > 0.0 {
                     *v *= ratio;
                 }
             }
 
-            // スペクトル包絡をリサンプル（周波数軸を伸縮）
+            // Resample spectral envelope (stretch/compress frequency axis)
             for i in 0..n_frames {
                 let mut new_spec = vec![0.0; spec_len];
                 for j in 0..spec_len {
@@ -150,7 +150,7 @@ fn main() {
                         new_spec[j] = spectrogram_modified[[i, src_idx]] * (1.0 - frac)
                             + spectrogram_modified[[i, src_idx + 1]] * frac;
                     } else {
-                        // 範囲外は末端値で埋める（0 だと ln(0)=-inf で合成が壊れる）
+                        // Fill out-of-range bins with edge value (0 causes ln(0)=-inf breaking synthesis)
                         new_spec[j] = spectrogram_modified[[i, spec_len - 1]];
                     }
                 }
@@ -166,12 +166,12 @@ fn main() {
         }
     }
 
-    // 合成
+    // Synthesis
     eprintln!("Synthesizing...");
     let synth = Synthesizer::new(estimator.frame_period(), fs, fft_size);
     let y = synth.synthesize(&f0_modified, &spectrogram_modified, &aperiodicity);
 
-    // WAV 書き出し
+    // Write WAV
     let output_samples: Vec<f64> = y.to_vec();
     write_wav(output_path, &output_samples, fs);
     eprintln!(
@@ -203,7 +203,7 @@ fn read_wav(path: &str) -> (Vec<f64>, i32) {
             let max_val = (1i64 << (bits - 1)) as f64;
             reader
                 .into_samples::<i32>()
-                .step_by(spec.channels as usize) // モノラル化（先頭チャンネルのみ）
+                .step_by(spec.channels as usize) // Convert to mono (first channel only)
                 .map(|s| s.unwrap() as f64 / max_val)
                 .collect()
         }

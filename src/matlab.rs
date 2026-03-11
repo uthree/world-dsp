@@ -1,8 +1,8 @@
 use ndarray::Array1;
 
-/// MATLAB 互換丸め（0.5 で切り上げ）。
+/// MATLAB-compatible rounding (rounds 0.5 away from zero).
 ///
-/// MATLAB の `round()` と同じ挙動: 0.5 は正の無限大方向に丸める。
+/// Same behavior as MATLAB's `round()`: 0.5 is rounded toward positive infinity.
 pub fn matlab_round(x: f64) -> i32 {
     if x > 0.0 {
         (x + 0.5) as i32
@@ -11,9 +11,9 @@ pub fn matlab_round(x: f64) -> i32 {
     }
 }
 
-/// 差分（MATLAB の `diff` 相当）。
+/// Difference (equivalent to MATLAB's `diff`).
 ///
-/// 長さ `n` の入力に対し、長さ `n-1` の隣接差分ベクトルを返す。
+/// Returns a vector of length `n-1` containing adjacent differences from an input of length `n`.
 pub fn diff(x: &[f64]) -> Vec<f64> {
     let mut y = vec![0.0; x.len() - 1];
     for i in 0..x.len() - 1 {
@@ -22,9 +22,9 @@ pub fn diff(x: &[f64]) -> Vec<f64> {
     y
 }
 
-/// FFT シフト（左右半分を入れ替え）。
+/// FFT shift (swaps left and right halves).
 ///
-/// 入力 `x` と出力 `y` は同じ長さでなければならない。
+/// Input `x` and output `y` must have the same length.
 pub fn fftshift(x: &[f64], y: &mut [f64]) {
     let half = x.len() / 2;
     for i in 0..half {
@@ -33,11 +33,11 @@ pub fn fftshift(x: &[f64], y: &mut [f64]) {
     }
 }
 
-/// ヒストグラムビンのインデックス割り当て（MATLAB の `histc` 相当）。
+/// Histogram bin index assignment (equivalent to MATLAB's `histc`).
 ///
-/// ソート済みのブレークポイント `x` と問い合わせ点 `edges` に対し、
-/// 各 `edges[i]` が属するビン番号（1-based）を `index[i]` に格納する。
-/// `x`, `edges` はともに昇順でなければならない。
+/// Given sorted breakpoints `x` and query points `edges`,
+/// stores the 1-based bin number that each `edges[i]` belongs to in `index[i]`.
+/// Both `x` and `edges` must be in ascending order.
 pub fn histc(x: &[f64], edges: &[f64], index: &mut [i32]) {
     let mut count: usize = 1;
     let mut i = 0;
@@ -68,10 +68,10 @@ pub fn histc(x: &[f64], edges: &[f64], index: &mut [i32]) {
     }
 }
 
-/// 線形補間（MATLAB の `interp1` 相当）。
+/// Linear interpolation (equivalent to MATLAB's `interp1`).
 ///
-/// ソート済みの節点 `(x, y)` に対し、問い合わせ点 `xi` での補間値を `yi` に格納する。
-/// `xi` は `x` の範囲内でなければならない。
+/// Given sorted knots `(x, y)`, stores the interpolated values at query points `xi` in `yi`.
+/// `xi` must be within range of `x`.
 pub fn interp1(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     let x_length = x.len();
     let xi_length = xi.len();
@@ -91,16 +91,16 @@ pub fn interp1(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     }
 }
 
-/// 等間隔データ用高速線形補間（MATLAB の `interp1q` 相当）。
+/// Fast linear interpolation for uniformly-spaced data (equivalent to MATLAB's `interp1q`).
 ///
-/// 等間隔（間隔 `shift`）の節点 `y` に対し、問い合わせ点 `xi` での補間値を `yi` に格納する。
+/// Given uniformly-spaced (spacing `shift`) knot values `y`, stores the interpolated values at query points `xi` in `yi`.
 ///
 /// # Arguments
-/// * `x` - 節点の開始値
-/// * `shift` - 節点の等間隔幅
-/// * `y` - 節点での値
-/// * `xi` - 問い合わせ点
-/// * `yi` - 補間結果の出力先
+/// * `x` - starting value of knots
+/// * `shift` - uniform spacing
+/// * `y` - values at knots
+/// * `xi` - query points
+/// * `yi` - output buffer for interpolated results
 pub fn interp1q(x: f64, shift: f64, y: &[f64], xi: &[f64], yi: &mut [f64]) {
     let x_length = y.len();
     let xi_length = xi.len();
@@ -125,9 +125,9 @@ pub fn interp1q(x: f64, shift: f64, y: &[f64], xi: &[f64], yi: &mut [f64]) {
     }
 }
 
-/// デシメート用 3 次 IIR ローパスフィルタ。
+/// 3rd-order IIR lowpass filter for decimation.
 ///
-/// デシメーション比 `r` (2-12) に対応する事前設計済み係数を使用する。
+/// Uses pre-designed coefficients for decimation ratio `r` (2-12).
 fn filter_for_decimate(x: &[f64], r: i32, y: &mut [f64]) {
     let (a, b) = match r {
         11 => (
@@ -199,10 +199,10 @@ fn filter_for_decimate(x: &[f64], r: i32, y: &mut [f64]) {
     }
 }
 
-/// ダウンサンプリング（MATLAB の `decimate` 相当）。
+/// Downsampling (equivalent to MATLAB's `decimate`).
 ///
-/// ゼロ位相 IIR ローパスフィルタを適用した後、比率 `r` でダウンサンプリングする。
-/// 出力長は `(x.len() - 1) / r + 1`。
+/// Applies zero-phase IIR lowpass filter, then downsamples by ratio `r`.
+/// Output length is `(x.len() - 1) / r + 1`.
 pub fn decimate(x: &[f64], r: i32) -> Vec<f64> {
     let x_length = x.len();
     let n_fact = 9;
@@ -244,10 +244,10 @@ pub fn decimate(x: &[f64], r: i32) -> Vec<f64> {
     y
 }
 
-/// FFT ベース畳み込み（高速 FIR フィルタリング）。
+/// FFT-based convolution (fast FIR filtering).
 ///
-/// 入力 `x` とフィルタ `h` を周波数領域で乗算し、畳み込み結果を返す。
-/// `x` と `h` は `fft_size` 以下の長さでなければならない。
+/// Multiplies input `x` and filter `h` in frequency domain and returns the convolution result.
+/// `x` and `h` must have length no greater than `fft_size`.
 ///
 /// # Returns
 /// `Array1<f64>` shape: `[fft_size]`
@@ -282,9 +282,9 @@ pub fn fast_fftfilt(x: &[f64], h: &[f64], fft_size: usize) -> Array1<f64> {
     Array1::from_vec(product.iter().map(|c| c.re * inv_n).collect())
 }
 
-/// 標準偏差（MATLAB 互換, N-1 で正規化）。
+/// Standard deviation (MATLAB-compatible, normalized by N-1).
 ///
-/// 不偏標準偏差を返す。長さ 1 以下の入力では NaN を返す可能性がある。
+/// Returns the unbiased standard deviation. May return NaN for inputs of length 1 or less.
 pub fn matlab_std(x: &[f64]) -> f64 {
     let n = x.len() as f64;
     let avg: f64 = x.iter().sum::<f64>() / n;

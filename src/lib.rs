@@ -1,35 +1,35 @@
 //! # world-dsp
 //!
-//! WORLD ボコーダーの Rust 実装。C++ 版 [WORLD](https://github.com/mmorise/World) を移植したもの。
+//! A Rust implementation of the WORLD vocoder. Ported from the C++ version [WORLD](https://github.com/mmorise/World).
 //!
-//! ## パイプライン
+//! ## Pipeline
 //!
-//! 1. **F0 推定** — [`Dio`], [`Harvest`], [`Yin`] のいずれかで基本周波数を推定
-//! 2. **スペクトル包絡推定** — [`CheapTrick`] でスペクトル包絡を推定（`Array2<f64>` shape: `[num_frames, fft_size/2+1]`）
-//! 3. **非周期性推定** — [`D4C`] で非周期性指標を推定（`Array2<f64>` shape: `[num_frames, fft_size/2+1]`）
-//! 4. **波形合成** — [`Synthesizer`] でパラメータから波形を再合成（`Array1<f64>` shape: `[y_length]`）
+//! 1. **F0 estimation** — Estimate the fundamental frequency using one of [`Dio`], [`Harvest`], or [`Yin`]
+//! 2. **Spectral envelope estimation** — Estimate the spectral envelope using [`CheapTrick`] (`Array2<f64>` shape: `[num_frames, fft_size/2+1]`)
+//! 3. **Aperiodicity estimation** — Estimate aperiodicity indices using [`D4C`] (`Array2<f64>` shape: `[num_frames, fft_size/2+1]`)
+//! 4. **Waveform synthesis** — Resynthesize the waveform from parameters using [`Synthesizer`] (`Array1<f64>` shape: `[y_length]`)
 //!
-//! ## 使用例
+//! ## Usage example
 //!
 //! ```no_run
 //! use world_dsp::*;
 //!
 //! let fs = 16000;
-//! let x: Vec<f64> = vec![0.0; fs as usize]; // 入力波形
+//! let x: Vec<f64> = vec![0.0; fs as usize]; // Input waveform
 //!
-//! // F0 推定
+//! // F0 estimation
 //! let estimator = Yin::new(fs);
 //! let (tp, f0) = estimator.estimate(&x);
 //!
-//! // スペクトル包絡推定
+//! // Spectral envelope estimation
 //! let ct = CheapTrick::new(fs, 1024);
 //! let spectrogram = ct.estimate(&x, &tp, &f0);
 //!
-//! // 非周期性推定
+//! // Aperiodicity estimation
 //! let d4c = D4C::new(fs, 1024);
 //! let aperiodicity = d4c.estimate(&x, &tp, &f0);
 //!
-//! // 波形合成
+//! // Waveform synthesis
 //! let synth = Synthesizer::new(estimator.frame_period(), fs, 1024);
 //! let y = synth.synthesize(&f0, &spectrogram, &aperiodicity);
 //! ```

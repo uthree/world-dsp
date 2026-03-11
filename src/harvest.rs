@@ -5,22 +5,22 @@ use crate::common::{forward_real_fft, inverse_real_fft, nuttall_window};
 use crate::constant::*;
 use crate::matlab::{decimate, diff, interp1, matlab_round};
 
-/// Harvest ピッチ推定。
+/// Harvest pitch estimation.
 ///
-/// C++ WORLD の Harvest に準拠した高精度 F0 推定を行う。
-/// 内部で 1ms フレーム周期で推定し、指定フレーム周期にリサンプルする。
-/// マルチチャンネルゼロクロッシング → VUV 判定 → StoneMask 相当のリファインメント
-/// → 後処理 → Butterworth 平滑化のパイプラインで処理する。
+/// Performs high-accuracy F0 estimation following C++ WORLD's Harvest.
+/// Internally estimates at 1ms frame period and resamples to the specified frame period.
+/// Multi-channel zero-crossing -> VUV decision -> StoneMask-equivalent refinement
+/// -> post-processing -> Butterworth smoothing pipeline.
 ///
 /// # Arguments
-/// * `x` - 入力波形（モノラル）
-/// * `fs` - サンプリング周波数 (Hz)
-/// * `option` - Harvest パラメータ
+/// * `x` - Input waveform (mono)
+/// * `fs` - Sampling frequency (Hz)
+/// * `option` - Harvest parameters
 ///
 /// # Returns
-/// `(temporal_positions, f0)` のタプル。
-/// - `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
-/// - `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`。無声フレームは 0.0
+/// `(temporal_positions, f0)` tuple.
+/// - `temporal_positions` - Temporal position of each frame (seconds), length `num_frames`
+/// - `f0` - Fundamental frequency of each frame (Hz), length `num_frames`. Unvoiced frames are 0.0
 pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
     let channels_in_octave = 40.0;
     let target_fs = 8000.0;
@@ -38,7 +38,7 @@ pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
         );
     }
 
-    // 内部的に 1ms フレーム周期で推定
+    // Internally estimate at 1ms frame period
     let basic_frame_period = 1;
     let (basic_tp, basic_f0) = harvest_general_body(
         x,
@@ -50,7 +50,7 @@ pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
         dimension_ratio,
     );
 
-    // 指定フレーム周期にリサンプル
+    // Resample to specified frame period
     let f0_length = get_samples_for_dio(fs, x.len(), option.frame_period);
     let mut temporal_positions = vec![0.0; f0_length];
     let mut f0 = vec![0.0; f0_length];
@@ -64,7 +64,7 @@ pub fn harvest(x: &[f64], fs: i32, option: &Harvest) -> (Vec<f64>, Vec<f64>) {
     (temporal_positions, f0)
 }
 
-/// Harvest メインボディ（C++ HarvestGeneralBody に準拠）
+/// Harvest main body (follows C++ HarvestGeneralBody)
 fn harvest_general_body(
     x: &[f64],
     fs: i32,
@@ -85,7 +85,7 @@ fn harvest_general_body(
         .map(|i| adjusted_f0_floor * (2.0_f64).powf((i + 1) as f64 / channels_in_octave))
         .collect();
 
-    // 単一デシメーション比率（C++ 準拠）
+    // Single decimation ratio (follows C++)
     let decimation_ratio = speed.max(1).min(12);
     let y_length = (x.len() as f64 / decimation_ratio as f64).ceil() as usize;
     let actual_fs = fs as f64 / decimation_ratio as f64;
@@ -94,7 +94,7 @@ fn harvest_general_body(
         y_length + 5 + 2 * (2.0 * actual_fs / boundary_f0_list[0]) as usize,
     );
 
-    // デシメーション + DC 除去 + FFT
+    // Decimation + DC removal + FFT
     let y = if decimation_ratio != 1 {
         decimate(x, decimation_ratio)
     } else {
@@ -109,7 +109,7 @@ fn harvest_general_body(
         temporal_positions[i] = i as f64 * frame_period as f64 / 1000.0;
     }
 
-    // 1. Raw F0 候補を取得（チャンネルごと）
+    // 1. Get raw F0 candidates (per channel)
     let raw_f0_candidates: Vec<Vec<f64>> = (0..number_of_channels)
         .into_par_iter()
         .map(|ch| {
@@ -132,12 +132,12 @@ fn harvest_general_body(
         })
         .collect();
 
-    // 2. DetectOfficialF0Candidates: チャンネル横断でVUV判定
+    // 2. DetectOfficialF0Candidates: cross-channel VUV decision
     let overlap_parameter = 7;
     let max_candidates =
         (matlab_round(number_of_channels as f64 / 10.0) * overlap_parameter).max(1) as usize;
 
-    // f0_candidates[frame][candidate] レイアウト
+    // f0_candidates[frame][candidate] layout
     let mut f0_candidates = vec![vec![0.0; max_candidates]; f0_length];
     detect_official_f0_candidates(
         &raw_f0_candidates,
@@ -147,10 +147,10 @@ fn harvest_general_body(
         &mut f0_candidates,
     );
 
-    // 3. OverlapF0Candidates: 候補を前後フレームに拡散
+    // 3. OverlapF0Candidates: spread candidates to neighboring frames
     let number_of_candidates_base = count_max_candidates(&f0_candidates, f0_length, max_candidates);
     let total_candidates = number_of_candidates_base * overlap_parameter as usize;
-    // 拡張
+    // Expansion
     let mut expanded = vec![vec![0.0; total_candidates]; f0_length];
     for i in 0..f0_length {
         for j in 0..max_candidates.min(number_of_candidates_base) {
@@ -159,7 +159,7 @@ fn harvest_general_body(
     }
     overlap_f0_candidates(f0_length, number_of_candidates_base, overlap_parameter as usize, &mut expanded);
 
-    // 4. RefineF0Candidates: 各候補をリファインしてスコアを計算
+    // 4. RefineF0Candidates: refine each candidate and compute scores
     let num_cands = total_candidates.min(expanded[0].len());
     let mut f0_scores = vec![vec![0.0_f64; num_cands]; f0_length];
     refine_f0_candidates_parallel(
@@ -193,10 +193,10 @@ fn harvest_general_body(
 }
 
 // ============================================================================
-// 内部関数
+// Internal functions
 // ============================================================================
 
-/// DC 除去 + FFT（C++ GetWaveformAndSpectrum 準拠）
+/// DC removal + FFT (follows C++ GetWaveformAndSpectrum)
 fn get_waveform_and_spectrum(y: &[f64], y_length: usize, fft_size: usize) -> Vec<Complex64> {
     let mut y_padded = vec![0.0; fft_size];
     for i in 0..y_length.min(fft_size) {
@@ -209,7 +209,7 @@ fn get_waveform_and_spectrum(y: &[f64], y_length: usize, fft_size: usize) -> Vec
     forward_real_fft(&y_padded, fft_size)
 }
 
-/// バンドパスフィルタリング（C++ Harvest GetFilteredSignal 準拠）
+/// Bandpass filtering (follows C++ Harvest GetFilteredSignal)
 fn get_filtered_signal(
     boundary_f0: f64,
     fft_size: usize,
@@ -254,7 +254,7 @@ fn get_filtered_signal(
     result
 }
 
-// ---- ゼロクロッシング解析 ----
+// ---- Zero-crossing analysis ----
 
 struct ZeroCrossings {
     negative_interval_locations: Vec<f64>,
@@ -308,7 +308,7 @@ fn zero_crossing_engine(x: &[f64], fs: i32) -> (Vec<f64>, Vec<f64>) {
     (interval_locations, intervals)
 }
 
-// ---- F0 候補計算 ----
+// ---- F0 candidate computation ----
 
 fn get_f0_candidate_contour(
     zero_crossings: &ZeroCrossings,
@@ -410,18 +410,18 @@ fn detect_official_f0_candidates(
     f0_candidates: &mut [Vec<f64>],
 ) {
     for i in 0..f0_length {
-        // VUV 判定: 各チャンネルで候補が有効かどうか
+        // VUV decision: whether candidate is valid in each channel
         let mut vuv = vec![0i32; number_of_channels];
         for j in 0..number_of_channels {
             vuv[j] = if raw_f0_candidates[j][i] > 0.0 { 1 } else { 0 };
         }
-        // 端を 0 に
+        // Set edges to 0
         if number_of_channels > 0 {
             vuv[0] = 0;
             vuv[number_of_channels - 1] = 0;
         }
 
-        // 有声区間の開始・終了を検出
+        // Detect start/end of voiced segments
         let mut st = Vec::new();
         let mut ed = Vec::new();
         for j in 1..number_of_channels {
@@ -434,7 +434,7 @@ fn detect_official_f0_candidates(
             }
         }
 
-        // 各有声区間の平均 F0 を候補に
+        // Average F0 of each voiced segment becomes a candidate
         let n_sections = st.len().min(ed.len());
         let mut n_cands = 0;
         for s in 0..n_sections {
@@ -480,14 +480,14 @@ fn overlap_f0_candidates(
     let n = 3usize;
     for i in 1..=n {
         for j in 0..number_of_candidates {
-            // 過去フレームの候補をコピー
+            // Copy candidates from past frames
             for k in i..f0_length {
                 let src_idx = j + number_of_candidates * i;
                 if src_idx < f0_candidates[k].len() {
                     f0_candidates[k][src_idx] = f0_candidates[k - i][j];
                 }
             }
-            // 未来フレームの候補をコピー
+            // Copy candidates from future frames
             for k in 0..f0_length.saturating_sub(i) {
                 let src_idx = j + number_of_candidates * (i + n);
                 if src_idx < f0_candidates[k].len() {
@@ -513,7 +513,7 @@ fn refine_f0_candidates_parallel(
     f0_candidates: &mut [Vec<f64>],
     f0_scores: &mut [Vec<f64>],
 ) {
-    // 並列処理のために (frame, candidate) ペアを処理
+    // Process (frame, candidate) pairs for parallelization
     let results: Vec<(usize, usize, f64, f64)> = (0..f0_length)
         .into_par_iter()
         .flat_map(|i| {
@@ -538,7 +538,7 @@ fn refine_f0_candidates_parallel(
     }
 }
 
-/// C++ Harvest の GetRefinedF0 に準拠
+/// Follows C++ Harvest's GetRefinedF0
 fn harvest_get_refined_f0(
     x: &[f64],
     x_length: usize,
@@ -613,7 +613,7 @@ fn harvest_get_refined_f0(
     }
 }
 
-/// C++ Harvest の FixF0 に準拠
+/// Follows C++ Harvest's FixF0
 fn fix_f0_harvest(
     power_spectrum: &[f64],
     numerator_i: &[f64],
@@ -667,7 +667,7 @@ fn remove_unreliable_candidates(
     f0_scores: &mut [Vec<f64>],
 ) {
     let threshold = 0.05;
-    // コピーを作成
+    // Create copy
     let tmp: Vec<Vec<f64>> = f0_candidates.iter().map(|v| v.clone()).collect();
 
     for i in 1..f0_length - 1 {
@@ -709,7 +709,7 @@ fn fix_f0_contour_harvest(
     f0_length: usize,
     number_of_candidates: usize,
 ) -> Vec<f64> {
-    // SearchF0Base: 最高スコアの候補を選択
+    // SearchF0Base: select candidate with highest score
     let mut base_f0 = vec![0.0; f0_length];
     for i in 0..f0_length {
         let mut best_score = 0.0;
@@ -721,7 +721,7 @@ fn fix_f0_contour_harvest(
         }
     }
 
-    // FixStep1: 急激な変化を除去（外挿基準）
+    // FixStep1: remove abrupt changes (extrapolation reference)
     let mut step1 = vec![0.0; f0_length];
     let allowed_range = 0.008;
     for i in 2..f0_length {
@@ -742,7 +742,7 @@ fn fix_f0_contour_harvest(
         step1[i] = if cond1 && cond2 { 0.0 } else { base_f0[i] };
     }
 
-    // FixStep2: 短い有声区間を除去
+    // FixStep2: remove short voiced segments
     let voice_range_minimum = 6;
     let mut step2 = step1.clone();
     let boundaries = get_boundary_list(&step1, f0_length);
@@ -756,14 +756,14 @@ fn fix_f0_contour_harvest(
         }
     }
 
-    // FixStep3: F0延長 + マージ（簡略版: 候補から最良を選んで延長）
+    // FixStep3: F0 extension + merge (simplified: select best from candidates and extend)
     let mut step3 = step2.clone();
     let boundaries = get_boundary_list(&step2, f0_length);
     let allowed_range_step3 = 0.18;
     for bi in 0..boundaries.len() / 2 {
         let ed = boundaries[bi * 2 + 1];
         let st = boundaries[bi * 2];
-        // 後方延長
+        // Backward extension
         let mut tmp_f0 = step3[ed];
         for k in (ed + 1)..f0_length.min(ed + 100) {
             let best = harvest_select_best_f0(tmp_f0, &f0_candidates[k], number_of_candidates, allowed_range_step3);
@@ -771,7 +771,7 @@ fn fix_f0_contour_harvest(
             step3[k] = best;
             tmp_f0 = best;
         }
-        // 前方延長
+        // Forward extension
         tmp_f0 = step3[st];
         for k in (1..=st.min(100)).rev() {
             let idx = st - (st.min(100) - k + 1);
@@ -783,7 +783,7 @@ fn fix_f0_contour_harvest(
         }
     }
 
-    // FixStep4: 短い無声区間を補間
+    // FixStep4: interpolate short unvoiced gaps
     let mut step4 = step3.clone();
     let boundaries = get_boundary_list(&step3, f0_length);
     let threshold = 9;
@@ -891,7 +891,7 @@ fn smooth_f0_contour(f0: &[f64], f0_length: usize) -> Vec<f64> {
 }
 
 // ============================================================================
-// トレイト実装
+// Trait implementation
 // ============================================================================
 
 impl F0Estimator for Harvest {
@@ -912,7 +912,7 @@ mod tests {
         let duration = 1.0;
         let f0_true = 440.0;
         let n_samples = (fs as f64 * duration) as usize;
-        // 倍音を含む信号（純粋正弦波はチャンネル幅が狭すぎて検出困難）
+        // Signal with harmonics (pure sine wave has too narrow channel width for detection)
         let x: Vec<f64> = (0..n_samples)
             .map(|i| {
                 let t = i as f64 / fs as f64;

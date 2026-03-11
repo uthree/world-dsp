@@ -2,21 +2,21 @@ use rayon::prelude::*;
 
 use crate::constant::*;
 
-/// YIN ピッチ推定。
+/// YIN pitch estimation.
 ///
-/// de Cheveigné & Kawahara (2002) の YIN アルゴリズムによる F0 推定。
-/// DIO/Harvest より高速で、リアルタイム用途に適する。
-/// 各フレームは rayon で並列処理される。
+/// F0 estimation using the YIN algorithm by de Cheveigné & Kawahara (2002).
+/// Faster than DIO/Harvest, suitable for real-time applications.
+/// Frames are processed in parallel using rayon.
 ///
 /// # Arguments
-/// * `x` - 入力波形（モノラル）
-/// * `fs` - サンプリング周波数 (Hz)
-/// * `option` - YIN パラメータ
+/// * `x` - Input waveform (mono)
+/// * `fs` - Sampling frequency (Hz)
+/// * `option` - YIN parameters
 ///
 /// # Returns
-/// `(temporal_positions, f0)` のタプル。
-/// - `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
-/// - `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`。無声フレームは 0.0
+/// A tuple `(temporal_positions, f0)`.
+/// - `temporal_positions` - Temporal position of each frame (seconds), length `num_frames`
+/// - `f0` - Fundamental frequency of each frame (Hz), length `num_frames`. Unvoiced frames are 0.0
 pub fn yin(x: &[f64], fs: i32, option: &Yin) -> (Vec<f64>, Vec<f64>) {
     let f0_length = get_samples_for_dio(fs, x.len(), option.frame_period);
     let temporal_positions: Vec<f64> = (0..f0_length)
@@ -50,9 +50,9 @@ pub fn yin(x: &[f64], fs: i32, option: &Yin) -> (Vec<f64>, Vec<f64>) {
     (temporal_positions, f0)
 }
 
-/// 単一フレームの YIN F0 推定。
+/// YIN F0 estimation for a single frame.
 ///
-/// 差分関数 → 累積平均正規化 → 閾値法 → 放物線補間 の順で処理。
+/// Processes in order: difference function -> cumulative mean normalized -> threshold method -> parabolic interpolation.
 fn estimate_f0_yin(
     x: &[f64],
     center: usize,
@@ -62,7 +62,7 @@ fn estimate_f0_yin(
     window_size: usize,
     threshold: f64,
 ) -> f64 {
-    // Step 1-2: 差分関数 d(tau) の計算
+    // Step 1-2: Compute difference function d(tau)
     let mut df = vec![0.0; tau_max + 1];
     for tau in 1..=tau_max {
         let mut sum = 0.0;
@@ -76,7 +76,7 @@ fn estimate_f0_yin(
         df[tau] = sum;
     }
 
-    // Step 3: 累積平均正規化差分関数 d'(tau)
+    // Step 3: Cumulative mean normalized difference function d'(tau)
     let mut cmndf = vec![0.0; tau_max + 1];
     cmndf[0] = 1.0;
     let mut running_sum = 0.0;
@@ -89,7 +89,7 @@ fn estimate_f0_yin(
         }
     }
 
-    // Step 4: 絶対閾値法 — threshold 以下で最初の局所最小値を探す
+    // Step 4: Absolute threshold method — find first local minimum below threshold
     let mut tau_estimate = 0usize;
     let mut found = false;
     for tau in tau_min..tau_max {
@@ -104,7 +104,7 @@ fn estimate_f0_yin(
         }
     }
 
-    // グローバル最小値にフォールバック
+    // Fall back to global minimum
     if !found {
         let mut min_val = f64::MAX;
         for tau in tau_min..=tau_max {
@@ -118,7 +118,7 @@ fn estimate_f0_yin(
         }
     }
 
-    // Step 5: 放物線補間でサブサンプル精度を得る
+    // Step 5: Obtain sub-sample precision via parabolic interpolation
     let tau_refined = parabolic_interpolation(&cmndf, tau_estimate);
 
     if tau_refined > 0.0 {
@@ -128,9 +128,9 @@ fn estimate_f0_yin(
     }
 }
 
-/// 放物線補間による精密なラグ推定。
+/// Precise lag estimation via parabolic interpolation.
 ///
-/// 3 点 `(tau-1, tau, tau+1)` の CMNDF 値を放物線でフィットし、最小点を返す。
+/// Fits a parabola to 3 CMNDF values at `(tau-1, tau, tau+1)` and returns the minimum point.
 fn parabolic_interpolation(cmndf: &[f64], tau: usize) -> f64 {
     if tau < 1 || tau + 1 >= cmndf.len() {
         return tau as f64;

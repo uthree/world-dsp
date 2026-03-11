@@ -4,19 +4,19 @@ use crate::common::{blackman_window, forward_real_fft};
 use crate::constant::*;
 use crate::matlab::matlab_round;
 
-/// StoneMask F0 リファインメント。
+/// StoneMask F0 refinement.
 ///
-/// DIO や Harvest で得られた粗い F0 推定値を、高調波の瞬時周波数解析により精密化する。
-/// 各フレームは rayon で並列処理される。
+/// Refines coarse F0 estimates from DIO or Harvest using instantaneous frequency analysis at harmonics.
+/// Frames are processed in parallel using rayon.
 ///
 /// # Arguments
-/// * `x` - 入力波形（モノラル）
-/// * `fs` - サンプリング周波数 (Hz)
-/// * `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
-/// * `f0` - 各フレームの粗い F0 推定値 (Hz), 長さ `num_frames`
+/// * `x` - Input waveform (mono)
+/// * `fs` - Sampling frequency (Hz)
+/// * `temporal_positions` - Temporal position of each frame (seconds), length `num_frames`
+/// * `f0` - Coarse F0 estimate for each frame (Hz), length `num_frames`
 ///
 /// # Returns
-/// 精密化された F0 列 (Hz), 長さ `num_frames`。無声フレーム（入力 F0 <= 40Hz）は 0.0。
+/// Refined F0 sequence (Hz), length `num_frames`. Unvoiced frames (input F0 <= 40Hz) are 0.0.
 pub fn stonemask(x: &[f64], fs: i32, temporal_positions: &[f64], f0: &[f64]) -> Vec<f64> {
     (0..f0.len())
         .into_par_iter()
@@ -24,11 +24,11 @@ pub fn stonemask(x: &[f64], fs: i32, temporal_positions: &[f64], f0: &[f64]) -> 
         .collect()
 }
 
-/// 単一フレームの F0 リファインメント。
+/// Single-frame F0 refinement.
 ///
-/// Blackman 窓で切り出し、パワースペクトルとクロススペクトルから
-/// 高調波位置での瞬時周波数を求め、振幅加重平均で精密な F0 を推定する。
-/// 補正量が 20% を超える場合は元の `initial_f0` をそのまま返す。
+/// Extracts with Blackman window, and from power spectrum and cross spectrum
+/// computes instantaneous frequency at harmonic positions and estimates precise F0 via amplitude-weighted average.
+/// Returns original `initial_f0` if correction exceeds 20%.
 pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_f0: f64) -> f64 {
     if initial_f0 <= FLOOR_F0_STONEMASK || initial_f0 > fs as f64 / 12.0 {
         return 0.0;
@@ -78,7 +78,7 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
             main_spectrum[i].re * diff_spectrum[i].im - main_spectrum[i].im * diff_spectrum[i].re;
     }
 
-    // 1回目: 2倍音で暫定F0、2回目: 6倍音で精密F0
+    // First pass: tentative F0 with 2 harmonics, second pass: precise F0 with 6 harmonics
     let tentative_f0 = fix_f0(&power_spectrum, &numerator_i, fft_size, fs, initial_f0, 2);
     let refined = fix_f0(&power_spectrum, &numerator_i, fft_size, fs, tentative_f0, 6);
 
@@ -89,7 +89,7 @@ pub(crate) fn get_refined_f0(x: &[f64], fs: i32, current_position: f64, initial_
     }
 }
 
-/// 高調波位置での瞬時周波数の振幅加重平均で F0 を推定する。
+/// Estimate F0 via amplitude-weighted average of instantaneous frequencies at harmonic positions.
 fn fix_f0(
     power_spectrum: &[f64],
     numerator_i: &[f64],

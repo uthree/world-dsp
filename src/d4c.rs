@@ -7,7 +7,7 @@ use crate::common::*;
 use crate::constant::*;
 use crate::matlab::*;
 
-/// D4C 用の F0 適応窓掛け波形取得。
+/// F0-adaptive windowed waveform extraction for D4C.
 fn get_windowed_waveform_d4c(
     x: &[f64],
     fs: i32,
@@ -70,9 +70,9 @@ fn get_windowed_waveform_d4c(
     waveform
 }
 
-/// エネルギー重心計算。
+/// Energy centroid computation.
 ///
-/// Blackman 窓で切り出した波形のスペクトル重心を計算する。
+/// Computes spectral centroid of the Blackman-windowed waveform.
 fn get_centroid(
     x: &[f64],
     fs: i32,
@@ -119,9 +119,9 @@ fn get_centroid(
     centroid
 }
 
-/// 時間的に静的なエネルギー重心。
+/// Temporally static energy centroid.
 ///
-/// 現在位置の前後 1/4 周期で 2 つの重心を取り、平均する。
+/// Takes two centroids at +/-1/4 period around the current position and averages them.
 fn get_static_centroid(
     x: &[f64],
     fs: i32,
@@ -162,7 +162,7 @@ fn get_static_centroid(
     static_centroid
 }
 
-/// 平滑化パワースペクトルの計算。
+/// Smoothed power spectrum computation.
 fn get_smoothed_power_spectrum(
     x: &[f64],
     fs: i32,
@@ -201,7 +201,7 @@ fn get_smoothed_power_spectrum(
     smoothed
 }
 
-/// 時間的に静的な群遅延の計算。
+/// Temporally static group delay computation.
 fn get_static_group_delay(
     static_centroid: &[f64],
     smoothed_power_spectrum: &[f64],
@@ -235,7 +235,7 @@ fn get_static_group_delay(
     static_group_delay
 }
 
-/// 粗い非周期性を 3kHz 間隔で計算する。
+/// Compute coarse aperiodicity at 3kHz intervals.
 fn get_coarse_aperiodicity(
     static_group_delay: &[f64],
     fs: i32,
@@ -284,9 +284,9 @@ fn get_coarse_aperiodicity(
     coarse_aperiodicity
 }
 
-/// D4C LoveTrain — VUV（有声/無声）判定。
+/// D4C LoveTrain — voiced/unvoiced decision.
 ///
-/// 各フレームのパワー分布比率を計算し、有声度スコアを返す。
+/// Computes power distribution ratio for each frame and returns voicing score.
 fn d4c_love_train(x: &[f64], fs: i32, f0: &[f64], temporal_positions: &[f64]) -> Vec<f64> {
     let lowest_f0 = 40.0;
     let fft_size =
@@ -335,7 +335,7 @@ fn d4c_love_train(x: &[f64], fs: i32, f0: &[f64], temporal_positions: &[f64]) ->
         .collect()
 }
 
-/// D4C の1フレーム処理。
+/// D4C single-frame processing.
 fn d4c_general_body(
     x: &[f64],
     fs: i32,
@@ -369,23 +369,23 @@ fn d4c_general_body(
     coarse_aperiodicity
 }
 
-/// D4C 非周期性指標推定。
+/// D4C aperiodicity estimation.
 ///
-/// 群遅延解析とエネルギー重心により、各フレーム・各周波数ビンの非周期性を推定する。
-/// 各フレームは rayon で並列処理される。
+/// Estimates aperiodicity for each frame and frequency bin using group delay analysis
+/// and energy centroid. Each frame is processed in parallel via rayon.
 ///
 /// # Arguments
-/// * `x` - 入力波形（モノラル）
-/// * `fs` - サンプリング周波数 (Hz)
-/// * `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
-/// * `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`
-/// * `fft_size` - FFT サイズ
-/// * `option` - D4C パラメータ
+/// * `x` - Input waveform (mono)
+/// * `fs` - Sampling frequency (Hz)
+/// * `temporal_positions` - Time position of each frame (seconds), length `num_frames`
+/// * `f0` - Fundamental frequency of each frame (Hz), length `num_frames`
+/// * `fft_size` - FFT size
+/// * `option` - D4C parameters
 ///
 /// # Returns
-/// 非周期性指標 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`。
-/// 各要素は非周期性比率（線形スケール、値域 [0, 1]）。
-/// 無声フレームは `1.0 - SAFE_GUARD_MINIMUM` で初期化される。
+/// Aperiodicity `Array2<f64>` shape: `[num_frames, fft_size/2+1]`.
+/// Each element is an aperiodicity ratio (linear scale, range [0, 1]).
+/// Unvoiced frames are initialized with `1.0 - SAFE_GUARD_MINIMUM`.
 pub fn d4c(
     x: &[f64],
     fs: i32,
@@ -476,10 +476,10 @@ pub fn d4c(
 }
 
 impl D4C {
-    /// 非周期性指標を推定する。
+    /// Estimate aperiodicity.
     ///
     /// # Returns
-    /// `Array2<f64>` shape: `[num_frames, fft_size/2+1]`。値域 [0, 1]。
+    /// `Array2<f64>` shape: `[num_frames, fft_size/2+1]`. Range [0, 1].
     pub fn estimate(
         &self,
         x: &[f64],

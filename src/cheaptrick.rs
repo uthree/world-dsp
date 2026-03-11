@@ -7,7 +7,7 @@ use crate::common::*;
 use crate::constant::*;
 use crate::matlab::*;
 
-/// F0 適応窓で波形を切り出す（Hanning 窓ベース）。
+/// Extract waveform with F0-adaptive window (Hanning-based).
 fn get_windowed_waveform(
     x: &[f64],
     fs: i32,
@@ -64,7 +64,7 @@ fn get_windowed_waveform(
     waveform
 }
 
-/// パワースペクトル計算（DC 補正付き）。
+/// Power spectrum computation (with DC correction).
 fn get_power_spectrum(waveform: &mut Vec<f64>, fs: i32, f0: f64, fft_size: usize) -> Vec<f64> {
     let spectrum = forward_real_fft(waveform, fft_size);
 
@@ -78,10 +78,10 @@ fn get_power_spectrum(waveform: &mut Vec<f64>, fs: i32, f0: f64, fft_size: usize
     output
 }
 
-/// ケプストラム平滑化と復元。
+/// Cepstral smoothing and recovery.
 ///
-/// 対数パワースペクトルをケプストラム領域でリフタリングし、
-/// 指数変換して平滑化されたスペクトル包絡を返す。
+/// Lifters the log power spectrum in the cepstral domain
+/// and returns the smoothed spectral envelope via exponential transform.
 fn smoothing_with_recovery(
     f0: f64,
     fs: i32,
@@ -131,9 +131,9 @@ fn smoothing_with_recovery(
     spectral_envelope
 }
 
-/// CheapTrick の1フレーム処理。
+/// CheapTrick single-frame processing.
 ///
-/// F0 適応窓掛け → パワースペクトル → 線形平滑化 → ケプストラム平滑化 の順で処理。
+/// Processes in order: F0-adaptive windowing -> power spectrum -> linear smoothing -> cepstral smoothing.
 fn cheaptrick_general_body(
     x: &[f64],
     fs: i32,
@@ -162,21 +162,21 @@ fn cheaptrick_general_body(
     smoothing_with_recovery(current_f0, fs, fft_size, q1, &smoothed)
 }
 
-/// CheapTrick スペクトル包絡推定。
+/// CheapTrick spectral envelope estimation.
 ///
-/// F0 適応窓とケプストラム平滑化により、各フレームのスペクトル包絡を推定する。
-/// 各フレームは rayon で並列処理される。
+/// Estimates spectral envelope for each frame using F0-adaptive windows and cepstral smoothing.
+/// Frames are processed in parallel using rayon.
 ///
 /// # Arguments
-/// * `x` - 入力波形（モノラル）
-/// * `fs` - サンプリング周波数 (Hz)
-/// * `temporal_positions` - 各フレームの時間位置 (秒), 長さ `num_frames`
-/// * `f0` - 各フレームの基本周波数 (Hz), 長さ `num_frames`
-/// * `option` - CheapTrick パラメータ
+/// * `x` - Input waveform (mono)
+/// * `fs` - Sampling frequency (Hz)
+/// * `temporal_positions` - Temporal position of each frame (seconds), length `num_frames`
+/// * `f0` - Fundamental frequency of each frame (Hz), length `num_frames`
+/// * `option` - CheapTrick parameters
 ///
 /// # Returns
-/// スペクトル包絡 `Array2<f64>` shape: `[num_frames, fft_size/2+1]`。
-/// 各要素はパワースペクトル密度（線形スケール、常に正）。
+/// Spectral envelope `Array2<f64>` shape: `[num_frames, fft_size/2+1]`.
+/// Each element is power spectral density (linear scale, always positive).
 pub fn cheaptrick(
     x: &[f64],
     fs: i32,
@@ -218,7 +218,7 @@ pub fn cheaptrick(
 }
 
 impl CheapTrick {
-    /// スペクトル包絡を推定する。
+    /// Estimate spectral envelope.
     ///
     /// # Returns
     /// `Array2<f64>` shape: `[num_frames, fft_size/2+1]`

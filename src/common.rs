@@ -4,10 +4,10 @@ use rustfft::FftPlanner;
 use crate::constant::*;
 use crate::matlab::interp1q;
 
-/// 実数→複素数 FFT（正方向）。
+/// Real-to-complex forward FFT.
 ///
-/// 実数信号 `x` を `fft_size` 点の FFT で変換する。
-/// 返り値は長さ `fft_size` の複素数ベクトル（全ビン）。
+/// Transforms the real signal `x` using an `fft_size`-point FFT.
+/// Returns a complex vector of length `fft_size` (all bins).
 pub fn forward_real_fft(x: &[f64], fft_size: usize) -> Vec<Complex64> {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(fft_size);
@@ -19,11 +19,11 @@ pub fn forward_real_fft(x: &[f64], fft_size: usize) -> Vec<Complex64> {
     buf
 }
 
-/// 複素スペクトル→実数信号 IFFT（逆方向）。
+/// Complex spectrum to real signal inverse FFT.
 ///
-/// `spectrum` は長さ `fft_size/2+1` の正の周波数成分。
-/// 共役対称性を利用して長さ `fft_size` の実数信号を復元する。
-/// 1/N 正規化済み。
+/// `spectrum` contains the positive frequency components of length `fft_size/2+1`.
+/// Using conjugate symmetry, recovers the real signal of length `fft_size`.
+/// 1/N normalized.
 pub fn inverse_real_fft(spectrum: &[Complex64], fft_size: usize) -> Vec<f64> {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_inverse(fft_size);
@@ -39,9 +39,9 @@ pub fn inverse_real_fft(spectrum: &[Complex64], fft_size: usize) -> Vec<f64> {
     buf.iter().map(|c| c.re / fft_size as f64).collect()
 }
 
-/// 複素数 FFT（正方向）。
+/// Complex forward FFT.
 ///
-/// 長さ `fft_size` の複素数入力を変換する。
+/// Transforms a complex input of length `fft_size`.
 pub fn forward_fft(x: &[Complex64], fft_size: usize) -> Vec<Complex64> {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(fft_size);
@@ -53,7 +53,7 @@ pub fn forward_fft(x: &[Complex64], fft_size: usize) -> Vec<Complex64> {
     buf
 }
 
-/// 複素数 IFFT（逆方向）。1/N 正規化済み。
+/// Complex inverse FFT. 1/N normalized.
 pub fn inverse_fft(x: &[Complex64], fft_size: usize) -> Vec<Complex64> {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_inverse(fft_size);
@@ -68,9 +68,9 @@ pub fn inverse_fft(x: &[Complex64], fft_size: usize) -> Vec<Complex64> {
     buf
 }
 
-/// Nuttall 窓を生成する。
+/// Generate a Nuttall window.
 ///
-/// 長さ `n` の対称 Nuttall 窓を返す。サイドローブ抑圧が強い。
+/// Returns a symmetric Nuttall window of length `n`. Has strong sidelobe suppression.
 pub fn nuttall_window(n: usize) -> Vec<f64> {
     let mut y = vec![0.0; n];
     for i in 0..n {
@@ -81,9 +81,9 @@ pub fn nuttall_window(n: usize) -> Vec<f64> {
     y
 }
 
-/// Hanning 窓を生成する。
+/// Generate a Hanning window.
 ///
-/// 長さ `n` の対称 Hanning 窓を返す。
+/// Returns a symmetric Hanning window of length `n`.
 pub fn hanning_window(n: usize) -> Vec<f64> {
     let mut y = vec![0.0; n];
     for i in 0..n {
@@ -93,9 +93,9 @@ pub fn hanning_window(n: usize) -> Vec<f64> {
     y
 }
 
-/// Blackman 窓を生成する。
+/// Generate a Blackman window.
 ///
-/// 長さ `n` の対称 Blackman 窓を返す。
+/// Returns a symmetric Blackman window of length `n`.
 pub fn blackman_window(n: usize) -> Vec<f64> {
     let mut y = vec![0.0; n];
     for i in 0..n {
@@ -105,10 +105,10 @@ pub fn blackman_window(n: usize) -> Vec<f64> {
     y
 }
 
-/// DC 成分補正。
+/// DC component correction.
 ///
-/// パワースペクトル `input[0..=fft_size/2]` の低周波 DC 成分を補正し、
-/// `output[0..=fft_size/2]` に書き込む。
+/// Corrects the low-frequency DC component of the power spectrum `input[0..=fft_size/2]`
+/// and writes the result to `output[0..=fft_size/2]`.
 pub fn dc_correction(input: &[f64], f0: f64, fs: i32, fft_size: usize, output: &mut [f64]) {
     let upper_limit = 2 + (f0 * fft_size as f64 / fs as f64) as usize;
 
@@ -137,7 +137,7 @@ pub fn dc_correction(input: &[f64], f0: f64, fs: i32, fft_size: usize, output: &
     }
 }
 
-/// 線形平滑化用パラメータ設定（内部関数）。
+/// Parameter setup for linear smoothing (internal function).
 fn set_parameters_for_linear_smoothing(
     boundary: usize,
     fft_size: usize,
@@ -169,10 +169,10 @@ fn set_parameters_for_linear_smoothing(
     }
 }
 
-/// 線形平滑化（周波数軸方向）。
+/// Linear smoothing (along frequency axis).
 ///
-/// パワースペクトル `input[0..=fft_size/2]` を幅 `width` (Hz) で平滑化し、
-/// `output[0..=fft_size/2]` に書き込む。
+/// Smooths the power spectrum `input[0..=fft_size/2]` with width `width` (Hz)
+/// and writes the result to `output[0..=fft_size/2]`.
 pub fn linear_smoothing(input: &[f64], width: f64, fs: i32, fft_size: usize, output: &mut [f64]) {
     let boundary = (width * fft_size as f64 / fs as f64) as usize + 1;
 
@@ -222,13 +222,13 @@ pub fn linear_smoothing(input: &[f64], width: f64, fs: i32, fft_size: usize, out
     }
 }
 
-/// 最小位相スペクトルを計算する。
+/// Compute minimum phase spectrum.
 ///
-/// 対数パワースペクトル `log_spectrum[0..=fft_size/2]` から最小位相スペクトルを計算する。
-/// ケプストラム法（因果律窓）を用いる。
+/// Computes the minimum phase spectrum from the log power spectrum
+/// `log_spectrum[0..=fft_size/2]` using the cepstral method (causal window).
 ///
 /// # Returns
-/// 長さ `fft_size/2+1` の複素スペクトル
+/// Complex spectrum of length `fft_size/2+1`
 pub fn get_minimum_phase_spectrum(log_spectrum: &[f64], fft_size: usize) -> Vec<Complex64> {
     let mut planner = FftPlanner::new();
 
@@ -244,7 +244,7 @@ pub fn get_minimum_phase_spectrum(log_spectrum: &[f64], fft_size: usize) -> Vec<
     let mut cepstrum: Vec<Complex64> = mirrored.iter().map(|&v| Complex64::new(v, 0.0)).collect();
     fft_forward.process(&mut cepstrum);
 
-    // 因果律窓: 正のケフレンシーを2倍、負のケフレンシーをゼロ
+    // Causal window: double positive quefrencies, zero negative quefrencies
     for i in 1..fft_size / 2 {
         cepstrum[i] = Complex64::new(cepstrum[i].re * 2.0, cepstrum[i].im * 2.0);
     }
@@ -265,7 +265,7 @@ pub fn get_minimum_phase_spectrum(log_spectrum: &[f64], fft_size: usize) -> Vec<
     result
 }
 
-/// 安全な非周期性値を返す（0.001 〜 0.999999999999 にクランプ）。
+/// Returns a safe aperiodicity value (clamped to 0.001--0.999999999999).
 #[inline]
 pub fn get_safe_aperiodicity(x: f64) -> f64 {
     x.clamp(0.001, 0.999999999999)
