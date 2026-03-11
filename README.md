@@ -22,3 +22,8 @@ let aperiodicity = d4c.estimate(&samples, &temporal_positions, &f0);
 let synth = Synthesizer::new(estimator.frame_period(), fs, fft_size);
 let resynthesized_waveform =  synth.synthesize(&f0, &spectrogram, &aperiodicity);
 ```
+
+## example (voice modification)
+```sh
+cargo run --release --example voice_modify -- assets/sample.wav out.wav gender 0.8
+```
