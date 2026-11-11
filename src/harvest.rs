@@ -86,13 +86,12 @@ fn harvest_general_body(
         .collect();
 
     // Single decimation ratio (follows C++)
-    let decimation_ratio = speed.max(1).min(12);
+    let decimation_ratio = speed.clamp(1, 12);
     let y_length = (x.len() as f64 / decimation_ratio as f64).ceil() as usize;
     let actual_fs = fs as f64 / decimation_ratio as f64;
 
-    let fft_size = get_suitable_fft_size(
-        y_length + 5 + 2 * (2.0 * actual_fs / boundary_f0_list[0]) as usize,
-    );
+    let fft_size =
+        get_suitable_fft_size(y_length + 5 + 2 * (2.0 * actual_fs / boundary_f0_list[0]) as usize);
 
     // Decimation + DC removal + FFT
     let y = if decimation_ratio != 1 {
@@ -114,8 +113,7 @@ fn harvest_general_body(
         .into_par_iter()
         .map(|ch| {
             let bf0 = boundary_f0_list[ch];
-            let filtered_signal =
-                get_filtered_signal(bf0, fft_size, actual_fs, &y_spectrum, y_len);
+            let filtered_signal = get_filtered_signal(bf0, fft_size, actual_fs, &y_spectrum, y_len);
             let zero_crossings =
                 get_four_zero_crossing_intervals(&filtered_signal, actual_fs as i32);
             let mut candidates = vec![0.0; f0_length];
@@ -157,7 +155,12 @@ fn harvest_general_body(
             expanded[i][j] = f0_candidates[i][j];
         }
     }
-    overlap_f0_candidates(f0_length, number_of_candidates_base, overlap_parameter as usize, &mut expanded);
+    overlap_f0_candidates(
+        f0_length,
+        number_of_candidates_base,
+        overlap_parameter as usize,
+        &mut expanded,
+    );
 
     // 4. RefineF0Candidates: refine each candidate and compute scores
     let num_cands = total_candidates.min(expanded[0].len());
@@ -179,12 +182,7 @@ fn harvest_general_body(
     remove_unreliable_candidates(f0_length, num_cands, &mut expanded, &mut f0_scores);
 
     // 6. FixF0Contour (SearchF0Base → Step1-4)
-    let best_f0 = fix_f0_contour_harvest(
-        &expanded,
-        &f0_scores,
-        f0_length,
-        num_cands,
-    );
+    let best_f0 = fix_f0_contour_harvest(&expanded, &f0_scores, f0_length, num_cands);
 
     // 7. SmoothF0Contour
     let smoothed = smooth_f0_contour(&best_f0, f0_length);
@@ -231,10 +229,10 @@ fn get_filtered_signal(
     let half = fft_size / 2 + 1;
     let mut result_spectrum = vec![Complex64::new(0.0, 0.0); fft_size];
     for i in 0..half {
-        let tmp = y_spectrum[i].re * filter_spectrum[i].re
-            - y_spectrum[i].im * filter_spectrum[i].im;
-        result_spectrum[i].im = y_spectrum[i].re * filter_spectrum[i].im
-            + y_spectrum[i].im * filter_spectrum[i].re;
+        let tmp =
+            y_spectrum[i].re * filter_spectrum[i].re - y_spectrum[i].im * filter_spectrum[i].im;
+        result_spectrum[i].im =
+            y_spectrum[i].re * filter_spectrum[i].im + y_spectrum[i].im * filter_spectrum[i].re;
         result_spectrum[i].re = tmp;
     }
     for i in half..fft_size {
@@ -293,8 +291,7 @@ fn zero_crossing_engine(x: &[f64], fs: i32) -> (Vec<f64>, Vec<f64>) {
     let mut locations = Vec::new();
     for i in 0..n - 1 {
         if x[i] > 0.0 && x[i + 1] <= 0.0 {
-            let edge = (i + 1) as f64
-                - x[i] / (x[i + 1] - x[i]);
+            let edge = (i + 1) as f64 - x[i] / (x[i + 1] - x[i]);
             locations.push(edge);
         }
     }
@@ -375,7 +372,9 @@ fn get_f0_candidate_contour(
 
 fn interp1_safe(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
     if x.len() < 2 || y.len() < 2 {
-        for v in yi.iter_mut() { *v = 0.0; }
+        for v in yi.iter_mut() {
+            *v = 0.0;
+        }
         return;
     }
     let x_min = x[0];
@@ -389,12 +388,16 @@ fn interp1_safe(x: &[f64], y: &[f64], xi: &[f64], yi: &mut [f64]) {
         }
     }
     if valid_xi.is_empty() {
-        for v in yi.iter_mut() { *v = 0.0; }
+        for v in yi.iter_mut() {
+            *v = 0.0;
+        }
         return;
     }
     let mut valid_yi = vec![0.0; valid_xi.len()];
     interp1(x, y, &valid_xi, &mut valid_yi);
-    for v in yi.iter_mut() { *v = 0.0; }
+    for v in yi.iter_mut() {
+        *v = 0.0;
+    }
     for (j, &i) in valid_idx.iter().enumerate() {
         yi[i] = valid_yi[j];
     }
@@ -457,7 +460,11 @@ fn detect_official_f0_candidates(
     }
 }
 
-fn count_max_candidates(f0_candidates: &[Vec<f64>], f0_length: usize, max_candidates: usize) -> usize {
+fn count_max_candidates(
+    f0_candidates: &[Vec<f64>],
+    f0_length: usize,
+    max_candidates: usize,
+) -> usize {
     let mut max_count = 0;
     for i in 0..f0_length {
         let count = f0_candidates[i][..max_candidates]
@@ -519,14 +526,14 @@ fn refine_f0_candidates_parallel(
         .flat_map(|i| {
             let pos = temporal_positions[i];
             (0..num_candidates)
-                .filter_map(|j| {
+                .map(|j| {
                     let current_f0 = f0_candidates[i][j];
                     if current_f0 <= 0.0 {
-                        return Some((i, j, 0.0, 0.0));
+                        return (i, j, 0.0, 0.0);
                     }
                     let (refined, score) =
                         harvest_get_refined_f0(y, y_length, fs, pos, current_f0, f0_floor, f0_ceil);
-                    Some((i, j, refined, score))
+                    (i, j, refined, score)
                 })
                 .collect::<Vec<_>>()
         })
@@ -555,10 +562,12 @@ fn harvest_get_refined_f0(
     let half_window_length = (1.5 * fs / current_f0 + 1.0) as usize;
     let window_length_in_time = (2 * half_window_length + 1) as f64 / fs;
     let base_time_length = half_window_length * 2 + 1;
-    let fft_size = (2.0_f64).powi(2 + ((half_window_length as f64 * 2.0 + 1.0).ln() / LOG2) as i32) as usize;
+    let fft_size =
+        (2.0_f64).powi(2 + ((half_window_length as f64 * 2.0 + 1.0).ln() / LOG2) as i32) as usize;
 
     // base_index
-    let basic_index = matlab_round((current_position + (-(half_window_length as f64)) / fs) * fs + 0.001);
+    let basic_index =
+        matlab_round((current_position + (-(half_window_length as f64)) / fs) * fs + 0.001);
     let base_index: Vec<i32> = (0..base_time_length as i32)
         .map(|i| basic_index + i)
         .collect();
@@ -596,15 +605,21 @@ fn harvest_get_refined_f0(
     let mut power_spectrum = vec![0.0; half_fft];
     let mut numerator_i = vec![0.0; half_fft];
     for j in 0..half_fft {
-        numerator_i[j] = main_spectrum[j].re * diff_spectrum[j].im
-            - main_spectrum[j].im * diff_spectrum[j].re;
+        numerator_i[j] =
+            main_spectrum[j].re * diff_spectrum[j].im - main_spectrum[j].im * diff_spectrum[j].re;
         power_spectrum[j] =
             main_spectrum[j].re * main_spectrum[j].re + main_spectrum[j].im * main_spectrum[j].im;
     }
 
     let number_of_harmonics = ((fs / 2.0 / current_f0) as usize).min(6);
-    let (refined_f0, score) =
-        fix_f0_harvest(&power_spectrum, &numerator_i, fft_size, fs, current_f0, number_of_harmonics);
+    let (refined_f0, score) = fix_f0_harvest(
+        &power_spectrum,
+        &numerator_i,
+        fft_size,
+        fs,
+        current_f0,
+        number_of_harmonics,
+    );
 
     if refined_f0 < f0_floor || refined_f0 > f0_ceil || score < 2.5 {
         (0.0, 0.0)
@@ -668,7 +683,7 @@ fn remove_unreliable_candidates(
 ) {
     let threshold = 0.05;
     // Create copy
-    let tmp: Vec<Vec<f64>> = f0_candidates.iter().map(|v| v.clone()).collect();
+    let tmp: Vec<Vec<f64>> = f0_candidates.to_vec();
 
     for i in 1..f0_length - 1 {
         for j in 0..number_of_candidates {
@@ -766,8 +781,15 @@ fn fix_f0_contour_harvest(
         // Backward extension
         let mut tmp_f0 = step3[ed];
         for k in (ed + 1)..f0_length.min(ed + 100) {
-            let best = harvest_select_best_f0(tmp_f0, &f0_candidates[k], number_of_candidates, allowed_range_step3);
-            if best == 0.0 { break; }
+            let best = harvest_select_best_f0(
+                tmp_f0,
+                &f0_candidates[k],
+                number_of_candidates,
+                allowed_range_step3,
+            );
+            if best == 0.0 {
+                break;
+            }
             step3[k] = best;
             tmp_f0 = best;
         }
@@ -775,9 +797,18 @@ fn fix_f0_contour_harvest(
         tmp_f0 = step3[st];
         for k in (1..=st.min(100)).rev() {
             let idx = st - (st.min(100) - k + 1);
-            if idx >= f0_length { break; }
-            let best = harvest_select_best_f0(tmp_f0, &f0_candidates[idx], number_of_candidates, allowed_range_step3);
-            if best == 0.0 { break; }
+            if idx >= f0_length {
+                break;
+            }
+            let best = harvest_select_best_f0(
+                tmp_f0,
+                &f0_candidates[idx],
+                number_of_candidates,
+                allowed_range_step3,
+            );
+            if best == 0.0 {
+                break;
+            }
             step3[idx] = best;
             tmp_f0 = best;
         }
@@ -788,9 +819,13 @@ fn fix_f0_contour_harvest(
     let boundaries = get_boundary_list(&step3, f0_length);
     let threshold = 9;
     for i in 0..boundaries.len() / 2 {
-        if i + 1 >= boundaries.len() / 2 { break; }
+        if i + 1 >= boundaries.len() / 2 {
+            break;
+        }
         let distance = boundaries[(i + 1) * 2] as i64 - boundaries[i * 2 + 1] as i64 - 1;
-        if distance >= threshold || distance <= 0 { continue; }
+        if distance >= threshold || distance <= 0 {
+            continue;
+        }
         let tmp0 = step3[boundaries[i * 2 + 1]] + 1.0;
         let tmp1 = step3[boundaries[(i + 1) * 2]] - 1.0;
         let coefficient = (tmp1 - tmp0) / (distance as f64 + 1.0);
@@ -804,11 +839,18 @@ fn fix_f0_contour_harvest(
     step4
 }
 
-fn harvest_select_best_f0(reference_f0: f64, candidates: &[f64], n: usize, allowed_range: f64) -> f64 {
+fn harvest_select_best_f0(
+    reference_f0: f64,
+    candidates: &[f64],
+    n: usize,
+    allowed_range: f64,
+) -> f64 {
     let mut best_f0 = 0.0;
     let mut best_error = allowed_range;
     for i in 0..n.min(candidates.len()) {
-        if candidates[i] == 0.0 { continue; }
+        if candidates[i] == 0.0 {
+            continue;
+        }
         let err = (reference_f0 - candidates[i]).abs() / reference_f0;
         if err < best_error {
             best_error = err;
@@ -819,7 +861,10 @@ fn harvest_select_best_f0(reference_f0: f64, candidates: &[f64], n: usize, allow
 }
 
 fn get_boundary_list(f0: &[f64], f0_length: usize) -> Vec<usize> {
-    let mut vuv: Vec<i32> = f0[..f0_length].iter().map(|&v| if v > 0.0 { 1 } else { 0 }).collect();
+    let mut vuv: Vec<i32> = f0[..f0_length]
+        .iter()
+        .map(|&v| if v > 0.0 { 1 } else { 0 })
+        .collect();
     if f0_length > 0 {
         vuv[0] = 0;
         vuv[f0_length - 1] = 0;
@@ -839,8 +884,8 @@ fn get_boundary_list(f0: &[f64], f0_length: usize) -> Vec<usize> {
 // ---- SmoothF0Contour ----
 
 fn smooth_f0_contour(f0: &[f64], f0_length: usize) -> Vec<f64> {
-    let b = [0.0078202080334971724, 0.015640416066994345];
-    let a = [1.7347257688092754, -0.76600660094326412];
+    let b = [0.007_820_208_033_497_172, 0.015640416066994345];
+    let a = [1.7347257688092754, -0.766_006_600_943_264_1];
     let lag = 300usize;
     let new_f0_length = f0_length + lag * 2;
     let mut f0_contour = vec![0.0; new_f0_length];
@@ -857,8 +902,12 @@ fn smooth_f0_contour(f0: &[f64], f0_length: usize) -> Vec<f64> {
 
         // Extend edges
         let mut section = f0_contour.clone();
-        for i in 0..st { section[i] = section[st]; }
-        for i in (ed + 1)..new_f0_length { section[i] = section[ed]; }
+        for i in 0..st {
+            section[i] = section[st];
+        }
+        for i in (ed + 1)..new_f0_length {
+            section[i] = section[ed];
+        }
 
         // Forward filtering
         let mut w = [0.0_f64; 2];
@@ -898,8 +947,12 @@ impl F0Estimator for Harvest {
     fn estimate(&self, x: &[f64]) -> (Vec<f64>, Vec<f64>) {
         harvest(x, self.fs, self)
     }
-    fn fs(&self) -> i32 { self.fs }
-    fn frame_period(&self) -> f64 { self.frame_period }
+    fn fs(&self) -> i32 {
+        self.fs
+    }
+    fn frame_period(&self) -> f64 {
+        self.frame_period
+    }
 }
 
 #[cfg(test)]
@@ -929,7 +982,7 @@ mod tests {
         assert_eq!(temporal_positions.len(), f0.len());
 
         let mid = f0.len() / 2;
-        let start = if mid >= 2 { mid - 2 } else { 0 };
+        let start = mid.saturating_sub(2);
         let end = (mid + 3).min(f0.len());
         let voiced_f0: Vec<f64> = f0[start..end]
             .iter()

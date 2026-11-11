@@ -142,16 +142,16 @@ fn main() {
             // Resample spectral envelope (stretch/compress frequency axis)
             for i in 0..n_frames {
                 let mut new_spec = vec![0.0; spec_len];
-                for j in 0..spec_len {
+                for (j, value) in new_spec.iter_mut().enumerate() {
                     let src = j as f64 / ratio;
                     let src_idx = src.floor() as usize;
                     let frac = src - src_idx as f64;
                     if src_idx + 1 < spec_len {
-                        new_spec[j] = spectrogram_modified[[i, src_idx]] * (1.0 - frac)
+                        *value = spectrogram_modified[[i, src_idx]] * (1.0 - frac)
                             + spectrogram_modified[[i, src_idx + 1]] * frac;
                     } else {
                         // Fill out-of-range bins with edge value (0 causes ln(0)=-inf breaking synthesis)
-                        new_spec[j] = spectrogram_modified[[i, spec_len - 1]];
+                        *value = spectrogram_modified[[i, spec_len - 1]];
                     }
                 }
                 for j in 0..spec_len {

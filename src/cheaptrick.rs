@@ -65,7 +65,7 @@ fn get_windowed_waveform(
 }
 
 /// Power spectrum computation (with DC correction).
-fn get_power_spectrum(waveform: &mut Vec<f64>, fs: i32, f0: f64, fft_size: usize) -> Vec<f64> {
+fn get_power_spectrum(waveform: &mut [f64], fs: i32, f0: f64, fft_size: usize) -> Vec<f64> {
     let spectrum = forward_real_fft(waveform, fft_size);
 
     let mut power_spectrum = vec![0.0; fft_size / 2 + 1];
@@ -222,12 +222,7 @@ impl CheapTrick {
     ///
     /// # Returns
     /// `Array2<f64>` shape: `[num_frames, fft_size/2+1]`
-    pub fn estimate(
-        &self,
-        x: &[f64],
-        temporal_positions: &[f64],
-        f0: &[f64],
-    ) -> Array2<f64> {
+    pub fn estimate(&self, x: &[f64], temporal_positions: &[f64], f0: &[f64]) -> Array2<f64> {
         cheaptrick(x, self.fs, temporal_positions, f0, self)
     }
 }

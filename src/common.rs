@@ -270,3 +270,184 @@ pub fn get_minimum_phase_spectrum(log_spectrum: &[f64], fft_size: usize) -> Vec<
 pub fn get_safe_aperiodicity(x: f64) -> f64 {
     x.clamp(0.001, 0.999999999999)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_signal(n: usize) -> Vec<f64> {
+        (0..n)
+            .map(|i| {
+                let t = i as f64;
+                (0.3 * t).sin() + 0.5 * (1.7 * t).cos() + 0.01 * t
+            })
+            .collect()
+    }
+
+    #[test]
+    fn real_fft_round_trip() {
+        let fft_size = 64;
+        let x = test_signal(fft_size);
+        let spectrum = forward_real_fft(&x, fft_size);
+        assert_eq!(spectrum.len(), fft_size);
+        let y = inverse_real_fft(&spectrum[..=fft_size / 2], fft_size);
+        for (a, b) in x.iter().zip(&y) {
+            assert!((a - b).abs() < 1e-10, "{a} != {b}");
+        }
+    }
+
+    #[test]
+    fn forward_real_fft_zero_pads_and_truncates() {
+        let spectrum = forward_real_fft(&[1.0], 8);
+        for c in &spectrum {
+            assert!((c.re - 1.0).abs() < 1e-12 && c.im.abs() < 1e-12);
+        }
+        // Samples beyond fft_size are ignored.
+        let spectrum = forward_real_fft(&[1.0, 0.0, 0.0, 0.0, 5.0], 4);
+        for c in &spectrum {
+            assert!((c.re - 1.0).abs() < 1e-12 && c.im.abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn forward_real_fft_of_cosine_has_peak_at_bin() {
+        let fft_size = 128;
+        let bin = 5;
+        let x: Vec<f64> = (0..fft_size)
+            .map(|i| (2.0 * PI * bin as f64 * i as f64 / fft_size as f64).cos())
+            .collect();
+        let spectrum = forward_real_fft(&x, fft_size);
+        for (k, c) in spectrum.iter().enumerate().take(fft_size / 2 + 1) {
+            let expected = if k == bin { fft_size as f64 / 2.0 } else { 0.0 };
+            assert!((c.norm() - expected).abs() < 1e-9, "bin {k}: {}", c.norm());
+        }
+    }
+
+    #[test]
+    fn complex_fft_round_trip() {
+        let fft_size = 32;
+        let re = test_signal(fft_size);
+        let im = test_signal(fft_size + 3);
+        let x: Vec<Complex64> = (0..fft_size)
+            .map(|i| Complex64::new(re[i], im[i + 3]))
+            .collect();
+        let y = inverse_fft(&forward_fft(&x, fft_size), fft_size);
+        for (a, b) in x.iter().zip(&y) {
+            assert!((a - b).norm() < 1e-10);
+        }
+    }
+
+    fn assert_symmetric(w: &[f64]) {
+        let n = w.len();
+        for i in 0..n / 2 {
+            assert!((w[i] - w[n - 1 - i]).abs() < 1e-12, "not symmetric at {i}");
+        }
+    }
+
+    #[test]
+    fn hanning_window_shape() {
+        let w = hanning_window(9);
+        assert_eq!(w.len(), 9);
+        assert_symmetric(&w);
+        assert!(w[0].abs() < 1e-12 && w[8].abs() < 1e-12);
+        assert!((w[4] - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn blackman_window_shape() {
+        let w = blackman_window(11);
+        assert_symmetric(&w);
+        assert!(w[0].abs() < 1e-12);
+        assert!((w[5] - 1.0).abs() < 1e-12);
+        assert!(w.iter().all(|&v| v > -1e-12 && v <= 1.0 + 1e-12));
+    }
+
+    #[test]
+    fn nuttall_window_shape() {
+        let w = nuttall_window(15);
+        assert_symmetric(&w);
+        assert!(w[0].abs() < 1e-6);
+        assert!((w[7] - 1.0).abs() < 1e-6);
+        // Monotonically increasing towards the centre
+        for i in 0..7 {
+            assert!(w[i] < w[i + 1]);
+        }
+    }
+
+    #[test]
+    fn safe_aperiodicity_is_clamped() {
+        assert_eq!(get_safe_aperiodicity(-1.0), 0.001);
+        assert_eq!(get_safe_aperiodicity(0.5), 0.5);
+        assert_eq!(get_safe_aperiodicity(2.0), 0.999999999999);
+    }
+
+    #[test]
+    fn linear_smoothing_keeps_flat_spectrum() {
+        let fs = 16000;
+        let fft_size = 512;
+        let input = vec![3.0; fft_size / 2 + 1];
+        let mut output = vec![0.0; fft_size / 2 + 1];
+        linear_smoothing(&input, 200.0, fs, fft_size, &mut output);
+        for (i, &v) in output.iter().enumerate() {
+            assert!((v - 3.0).abs() < 1e-9, "bin {i}: {v}");
+        }
+    }
+
+    #[test]
+    fn linear_smoothing_spreads_a_peak() {
+        let fs = 16000;
+        let fft_size = 512;
+        let mut input = vec![1.0; fft_size / 2 + 1];
+        input[100] = 100.0;
+        let mut output = vec![0.0; fft_size / 2 + 1];
+        linear_smoothing(&input, 300.0, fs, fft_size, &mut output);
+        assert!(output[100] < input[100]);
+        assert!(output[98] > 1.0 && output[102] > 1.0);
+        // Away from the peak the flat level is kept.
+        assert!((output[200] - 1.0).abs() < 1e-9);
+        // Energy is roughly preserved
+        let sum_in: f64 = input.iter().sum();
+        let sum_out: f64 = output.iter().sum();
+        assert!((sum_in - sum_out).abs() / sum_in < 0.05);
+    }
+
+    #[test]
+    fn dc_correction_only_changes_low_bins() {
+        let fs = 16000;
+        let fft_size = 1024;
+        let f0 = 200.0;
+        let input: Vec<f64> = (0..=fft_size / 2).map(|i| 1.0 + i as f64).collect();
+        let mut output = vec![0.0; fft_size / 2 + 1];
+        dc_correction(&input, f0, fs, fft_size, &mut output);
+        let limit = 1 + (f0 * fft_size as f64 / fs as f64) as usize;
+        for i in limit..=fft_size / 2 {
+            assert_eq!(output[i], input[i], "bin {i}");
+        }
+        for i in 0..limit {
+            assert!(output[i] > input[i], "bin {i} should be boosted");
+        }
+    }
+
+    #[test]
+    fn minimum_phase_spectrum_of_flat_log_spectrum_is_unity() {
+        let fft_size = 64;
+        let log_spectrum = vec![0.0; fft_size / 2 + 1];
+        let result = get_minimum_phase_spectrum(&log_spectrum, fft_size);
+        assert_eq!(result.len(), fft_size / 2 + 1);
+        for c in &result {
+            assert!((c.re - 1.0).abs() < 1e-12 && c.im.abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn minimum_phase_spectrum_preserves_magnitude() {
+        let fft_size = 256;
+        let log_spectrum: Vec<f64> = (0..=fft_size / 2)
+            .map(|i| 0.5 * (2.0 * PI * i as f64 / fft_size as f64 * 3.0).cos() - 1.0)
+            .collect();
+        let result = get_minimum_phase_spectrum(&log_spectrum, fft_size);
+        for (i, (c, &l)) in result.iter().zip(&log_spectrum).enumerate() {
+            assert!((c.norm() - l.exp()).abs() < 1e-9, "bin {i}");
+        }
+    }
+}

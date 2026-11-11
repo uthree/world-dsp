@@ -135,7 +135,11 @@ fn filter_for_decimate(x: &[f64], r: i32, y: &mut [f64]) {
             [0.0026822508007163792, 0.008_046_752_402_149_138],
         ),
         12 => (
-            [2.4981398605924205, -2.1368928194784025, 0.621_875_138_162_214_8],
+            [
+                2.4981398605924205,
+                -2.1368928194784025,
+                0.621_875_138_162_214_8,
+            ],
             [0.002_109_727_590_470_9, 0.006_329_182_771_412_7],
         ),
         10 => (
@@ -143,11 +147,19 @@ fn filter_for_decimate(x: &[f64], r: i32, y: &mut [f64]) {
             [0.0034818622251927556, 0.010445586675578267],
         ),
         9 => (
-            [2.323_600_349_175_958, -1.8921545617463598, 0.531_489_281_337_290_7],
+            [
+                2.323_600_349_175_958,
+                -1.8921545617463598,
+                0.531_489_281_337_290_7,
+            ],
             [0.004_633_116_404_138_937, 0.013899349212416812],
         ),
         8 => (
-            [2.2357462340187593, -1.7780899984041358, 0.491_525_553_659_686_9],
+            [
+                2.2357462340187593,
+                -1.7780899984041358,
+                0.491_525_553_659_686_9,
+            ],
             [0.006_352_276_340_711_199, 0.019056829022133598],
         ),
         7 => (
@@ -155,7 +167,11 @@ fn filter_for_decimate(x: &[f64], r: i32, y: &mut [f64]) {
             [0.009_036_688_268_160_842, 0.027110064804482525],
         ),
         6 => (
-            [1.971_535_274_951_214, -1.4686795689225347, 0.3893908434965701],
+            [
+                1.971_535_274_951_214,
+                -1.4686795689225347,
+                0.3893908434965701,
+            ],
             [0.013469181309343825, 0.040407543928031475],
         ),
         5 => (
@@ -290,4 +306,149 @@ pub fn matlab_std(x: &[f64]) -> f64 {
     let avg: f64 = x.iter().sum::<f64>() / n;
     let s: f64 = x.iter().map(|&v| (v - avg).powi(2)).sum::<f64>() / (n - 1.0);
     s.sqrt()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_close(actual: &[f64], expected: &[f64], tol: f64) {
+        assert_eq!(actual.len(), expected.len(), "length mismatch");
+        for (i, (a, e)) in actual.iter().zip(expected).enumerate() {
+            assert!((a - e).abs() <= tol, "index {i}: {a} != {e} (tol {tol})");
+        }
+    }
+
+    #[test]
+    fn matlab_round_rounds_half_away_from_zero() {
+        assert_eq!(matlab_round(0.0), 0);
+        assert_eq!(matlab_round(0.5), 1);
+        assert_eq!(matlab_round(-0.5), -1);
+        assert_eq!(matlab_round(1.4), 1);
+        assert_eq!(matlab_round(2.5), 3);
+        assert_eq!(matlab_round(-1.6), -2);
+        assert_eq!(matlab_round(-2.5), -3);
+    }
+
+    #[test]
+    fn diff_returns_adjacent_differences() {
+        assert_close(&diff(&[1.0, 4.0, 9.0, 16.0]), &[3.0, 5.0, 7.0], 0.0);
+        assert!(diff(&[42.0]).is_empty());
+    }
+
+    #[test]
+    fn fftshift_swaps_halves() {
+        let x = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let mut y = [0.0; 6];
+        fftshift(&x, &mut y);
+        assert_close(&y, &[3.0, 4.0, 5.0, 0.0, 1.0, 2.0], 0.0);
+    }
+
+    #[test]
+    fn histc_assigns_one_based_bins() {
+        let x = [0.0, 1.0, 2.0, 3.0];
+        let edges = [0.0, 0.5, 1.5, 2.5];
+        let mut index = [0; 4];
+        histc(&x, &edges, &mut index);
+        assert_eq!(index, [1, 1, 2, 3]);
+    }
+
+    #[test]
+    fn interp1_interpolates_linearly() {
+        let x = [0.0, 1.0, 2.0, 3.0];
+        let y = [0.0, 10.0, 20.0, 40.0];
+        let xi = [0.0, 0.5, 1.5, 2.25, 2.5];
+        let mut yi = [0.0; 5];
+        interp1(&x, &y, &xi, &mut yi);
+        assert_close(&yi, &[0.0, 5.0, 15.0, 25.0, 30.0], 1e-12);
+    }
+
+    #[test]
+    fn interp1_handles_non_uniform_knots() {
+        let x = [0.0, 1.0, 4.0];
+        let y = [1.0, 2.0, 8.0];
+        let xi = [0.5, 2.0, 3.0];
+        let mut yi = [0.0; 3];
+        interp1(&x, &y, &xi, &mut yi);
+        assert_close(&yi, &[1.5, 4.0, 6.0], 1e-12);
+    }
+
+    #[test]
+    fn interp1q_interpolates_uniform_knots() {
+        let y = [0.0, 2.0, 4.0, 8.0];
+        let xi = [0.0, 0.5, 2.25, 3.0];
+        let mut yi = [0.0; 4];
+        interp1q(0.0, 1.0, &y, &xi, &mut yi);
+        assert_close(&yi, &[0.0, 1.0, 5.0, 8.0], 1e-12);
+    }
+
+    #[test]
+    fn interp1q_respects_origin_and_spacing() {
+        // Knots at 10, 12, 14
+        let y = [1.0, 3.0, 7.0];
+        let xi = [10.0, 11.0, 13.0];
+        let mut yi = [0.0; 3];
+        interp1q(10.0, 2.0, &y, &xi, &mut yi);
+        assert_close(&yi, &[1.0, 2.0, 5.0], 1e-12);
+    }
+
+    #[test]
+    fn decimate_output_length() {
+        for r in 2..=12 {
+            for n in [100usize, 101, 257] {
+                let x = vec![0.0; n];
+                assert_eq!(
+                    decimate(&x, r).len(),
+                    (n - 1) / r as usize + 1,
+                    "r={r} n={n}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decimate_preserves_dc() {
+        for r in 2..=12 {
+            let x = vec![1.0; 480];
+            let y = decimate(&x, r);
+            // Like the C++ WORLD, the signal is padded by only 9 samples, so the
+            // start-up transient of the IIR filter reaches the edges.
+            // Check the interior only.
+            let margin = y.len() / 4;
+            for (i, &v) in y.iter().enumerate().take(y.len() - margin).skip(margin) {
+                assert!((v - 1.0).abs() < 1e-3, "r={r} index {i}: {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn decimate_keeps_low_frequency_sine() {
+        // A 100 Hz sine at 16 kHz is well inside the pass band for r = 4.
+        let fs = 16000.0;
+        let x: Vec<f64> = (0..1600)
+            .map(|i| (2.0 * std::f64::consts::PI * 100.0 * i as f64 / fs).sin())
+            .collect();
+        let y = decimate(&x, 4);
+        let peak = y[50..y.len() - 50]
+            .iter()
+            .fold(0.0_f64, |m, &v| m.max(v.abs()));
+        assert!((peak - 1.0).abs() < 0.05, "peak amplitude {peak}");
+    }
+
+    #[test]
+    fn fast_fftfilt_matches_direct_convolution() {
+        let y = fast_fftfilt(&[1.0, 2.0, 3.0], &[1.0, 1.0], 8);
+        assert_close(
+            y.as_slice().unwrap(),
+            &[1.0, 3.0, 5.0, 3.0, 0.0, 0.0, 0.0, 0.0],
+            1e-12,
+        );
+    }
+
+    #[test]
+    fn matlab_std_is_unbiased() {
+        let x = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+        assert!((matlab_std(&x) - (32.0_f64 / 7.0).sqrt()).abs() < 1e-12);
+        assert_eq!(matlab_std(&[3.0, 3.0, 3.0]), 0.0);
+    }
 }

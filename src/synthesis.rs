@@ -411,6 +411,9 @@ fn get_one_frame_segment(
 /// # Returns
 /// Synthesized waveform `Array1<f64>` shape: `[y_length]`.
 /// `y_length = floor((num_frames - 1) * frame_period / 1000 * fs) + 1`
+///
+/// # Panics
+/// Panics if `f0` has fewer than two frames.
 pub fn synthesis(
     f0: &[f64],
     spectrogram: &Array2<f64>,
@@ -420,6 +423,10 @@ pub fn synthesis(
     fft_size: usize,
 ) -> Array1<f64> {
     let f0_length = f0.len();
+    assert!(
+        f0_length >= 2,
+        "synthesis needs at least two frames, got {f0_length}"
+    );
     let frame_period_sec = frame_period / 1000.0;
 
     let y_length = ((f0_length as f64 - 1.0) * frame_period_sec * fs as f64) as usize + 1;
@@ -497,6 +504,13 @@ impl Synthesizer {
         spectrogram: &Array2<f64>,
         aperiodicity: &Array2<f64>,
     ) -> Array1<f64> {
-        synthesis(f0, spectrogram, aperiodicity, self.frame_period, self.fs, self.fft_size)
+        synthesis(
+            f0,
+            spectrogram,
+            aperiodicity,
+            self.frame_period,
+            self.fs,
+            self.fft_size,
+        )
     }
 }
