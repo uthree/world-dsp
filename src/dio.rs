@@ -38,9 +38,8 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
     let y_length = y.len();
 
     // Number of bands
-    let number_of_bands = 1
-        + (((option.f0_ceil / option.f0_floor)).ln() / LOG2 * option.channels_in_octave)
-            as usize;
+    let number_of_bands =
+        1 + ((option.f0_ceil / option.f0_floor).ln() / LOG2 * option.channels_in_octave) as usize;
 
     // boundary F0 list
     let boundary_f0_list: Vec<f64> = (0..number_of_bands)
@@ -73,7 +72,8 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
             get_f0_candidate_contour(
                 &zero_crossings,
                 boundary_f0_list[i],
-                actual_fs as f64,
+                option.f0_floor,
+                option.f0_ceil,
                 &temporal_positions,
                 f0_length,
                 &mut candidates,
@@ -81,7 +81,7 @@ pub fn dio(x: &[f64], fs: i32, option: &Dio) -> (Vec<f64>, Vec<f64>) {
             );
             // C++: raw_f0_scores[i][j] = f0_score[j] / (f0_candidate[j] + safeguard)
             for j in 0..f0_length {
-                scores[j] = scores[j] / (candidates[j] + SAFE_GUARD_MINIMUM);
+                scores[j] /= candidates[j] + SAFE_GUARD_MINIMUM;
             }
             (candidates, scores)
         })
@@ -145,10 +145,10 @@ fn get_spectrum_for_estimation(
     let half = fft_size / 2 + 1;
     for i in 0..half {
         // Complex multiplication
-        let tmp = y_spectrum[i].re * filter_spectrum[i].re
-            - y_spectrum[i].im * filter_spectrum[i].im;
-        y_spectrum[i].im = y_spectrum[i].re * filter_spectrum[i].im
-            + y_spectrum[i].im * filter_spectrum[i].re;
+        let tmp =
+            y_spectrum[i].re * filter_spectrum[i].re - y_spectrum[i].im * filter_spectrum[i].im;
+        y_spectrum[i].im =
+            y_spectrum[i].re * filter_spectrum[i].im + y_spectrum[i].im * filter_spectrum[i].re;
         y_spectrum[i].re = tmp;
     }
 
@@ -305,7 +305,8 @@ fn zero_crossing_engine(x: &[f64], fs: i32) -> (Vec<f64>, Vec<f64>) {
 fn get_f0_candidate_contour(
     zero_crossings: &ZeroCrossings,
     boundary_f0: f64,
-    _actual_fs: f64,
+    f0_floor: f64,
+    f0_ceil: f64,
     temporal_positions: &[f64],
     f0_length: usize,
     f0_candidate: &mut [f64],
@@ -355,8 +356,6 @@ fn get_f0_candidate_contour(
     );
 
     // C++ GetF0CandidateContourSub: always average of 4 values, score divided by 3.0
-    let f0_floor = boundary_f0 / 2.0;
-    let f0_ceil = boundary_f0;
     for i in 0..f0_length {
         let mean = (interp_neg[i] + interp_pos[i] + interp_peak[i] + interp_dip[i]) / 4.0;
 
@@ -368,8 +367,8 @@ fn get_f0_candidate_contour(
             / 3.0;
         let score = score.sqrt();
 
-        // C++: range filtering by boundary_f0
-        if mean > f0_ceil || mean < f0_floor {
+        // C++: range filtering by boundary_f0 and by the search range
+        if mean > boundary_f0 || mean < boundary_f0 / 2.0 || mean > f0_ceil || mean < f0_floor {
             f0_candidate[i] = 0.0;
             f0_score[i] = MAXIMUM_VALUE;
         } else {
@@ -456,13 +455,12 @@ fn fix_f0_contour(
     f0_length: usize,
     f0_floor: f64,
     allowed_range: f64,
-    temporal_positions: &mut Vec<f64>,
+    temporal_positions: &mut [f64],
 ) -> (Vec<f64>, Vec<f64>) {
-    let voice_range_minimum =
-        (0.5 + 1000.0 / frame_period / f0_floor) as usize * 2 + 1;
+    let voice_range_minimum = (0.5 + 1000.0 / frame_period / f0_floor) as usize * 2 + 1;
 
     if f0_length <= voice_range_minimum {
-        return (temporal_positions.clone(), best_f0_contour.to_vec());
+        return (temporal_positions.to_vec(), best_f0_contour.to_vec());
     }
 
     let mut f0_step1 = vec![0.0; f0_length];
@@ -569,7 +567,7 @@ fn fix_f0_contour(
         }
     }
 
-    (temporal_positions.clone(), f0_step4)
+    (temporal_positions.to_vec(), f0_step4)
 }
 
 /// Candidate selection following C++ WORLD.
@@ -585,17 +583,11 @@ fn select_best_f0(
 ) -> f64 {
     let reference_f0 = (current_f0 * 3.0 - past_f0) / 2.0;
 
-    let mut best_f0 = f0_candidates[0]
-        .get(target_index)
-        .copied()
-        .unwrap_or(0.0);
+    let mut best_f0 = f0_candidates[0].get(target_index).copied().unwrap_or(0.0);
     let mut minimum_error = (reference_f0 - best_f0).abs();
 
     for j in 1..number_of_bands {
-        let candidate = f0_candidates[j]
-            .get(target_index)
-            .copied()
-            .unwrap_or(0.0);
+        let candidate = f0_candidates[j].get(target_index).copied().unwrap_or(0.0);
         let current_error = (reference_f0 - candidate).abs();
         if current_error < minimum_error {
             minimum_error = current_error;

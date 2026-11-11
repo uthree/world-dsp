@@ -34,6 +34,15 @@
 //! let y = synth.synthesize(&f0, &spectrogram, &aperiodicity);
 //! ```
 
+// The algorithms are ported line by line from the C++ WORLD implementation.
+// Index-based loops and long argument lists are kept on purpose so that the
+// code stays easy to compare with the original.
+#![allow(
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::too_many_arguments
+)]
+
 pub mod cheaptrick;
 pub mod common;
 pub mod constant;
@@ -46,6 +55,6 @@ pub mod synthesis;
 pub mod yin;
 
 pub use constant::{
-    get_fft_size_for_cheaptrick, CheapTrick, D4C, Dio, F0Estimator, Harvest, Synthesizer, Yin,
+    CheapTrick, D4C, Dio, F0Estimator, Harvest, Synthesizer, Yin, get_fft_size_for_cheaptrick,
 };
 pub use stonemask::stonemask;

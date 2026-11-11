@@ -480,12 +480,7 @@ impl D4C {
     ///
     /// # Returns
     /// `Array2<f64>` shape: `[num_frames, fft_size/2+1]`. Range [0, 1].
-    pub fn estimate(
-        &self,
-        x: &[f64],
-        temporal_positions: &[f64],
-        f0: &[f64],
-    ) -> Array2<f64> {
+    pub fn estimate(&self, x: &[f64], temporal_positions: &[f64], f0: &[f64]) -> Array2<f64> {
         d4c(x, self.fs, temporal_positions, f0, self.fft_size, self)
     }
 }

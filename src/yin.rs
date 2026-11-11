@@ -231,7 +231,7 @@ mod tests {
             let (_tp, f0) = yin(&x, fs, &option);
 
             let mid = f0.len() / 2;
-            let start = if mid >= 2 { mid - 2 } else { 0 };
+            let start = mid.saturating_sub(2);
             let end = (mid + 3).min(f0.len());
             let voiced: Vec<f64> = f0[start..end]
                 .iter()

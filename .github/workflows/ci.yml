@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }}, ${{ matrix.profile }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        profile: [debug, release]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.profile }}
+      - name: cargo test
+        shell: bash
+        run: cargo test --locked --all-targets ${{ matrix.profile == 'release' && '--release' || '' }}
+      - name: doc tests
+        if: matrix.profile == 'debug'
+        run: cargo test --locked --doc
+
+  msrv:
+    name: MSRV (1.87)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.87
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --all-targets
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --locked --no-deps
+
+  examples:
+    name: examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release --examples
+      - name: generate_test_wav
+        run: |
+          cargo run --locked --release --example generate_test_wav -- "$RUNNER_TEMP/tone.wav" 220 1.0
+          test -s "$RUNNER_TEMP/tone.wav"
+      - name: voice_modify
+        run: |
+          set -e
+          for f0 in yin dio harvest; do
+            cargo run --locked --release --example voice_modify -- assets/sample.wav "$RUNNER_TEMP/pitch-$f0.wav" pitch 3 --f0 "$f0"
+          done
+          cargo run --locked --release --example voice_modify -- assets/sample.wav "$RUNNER_TEMP/robot.wav" robot
+          cargo run --locked --release --example voice_modify -- assets/sample.wav "$RUNNER_TEMP/whisper.wav" whisper
+          cargo run --locked --release --example voice_modify -- assets/sample.wav "$RUNNER_TEMP/gender-low.wav" gender 0.8
+          cargo run --locked --release --example voice_modify -- assets/sample.wav "$RUNNER_TEMP/gender-high.wav" gender 1.2
+          cargo run --locked --release --example voice_modify -- "$RUNNER_TEMP/tone.wav" "$RUNNER_TEMP/tone-out.wav" pitch -2
+          for f in "$RUNNER_TEMP"/*.wav; do test -s "$f"; done
+          ls -l "$RUNNER_TEMP"/*.wav

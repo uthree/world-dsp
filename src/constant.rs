@@ -263,7 +263,99 @@ pub fn get_samples_for_dio(fs: i32, x_length: usize, frame_period: f64) -> usize
     (1000.0 * x_length as f64 / fs as f64 / frame_period) as usize + 1
 }
 
-/// Return the smallest power of two greater than or equal to `sample`.
+/// Return the smallest power of two greater than `sample`.
+///
+/// Same as `GetSuitableFFTSize` in the C++ WORLD: when `sample` is already a
+/// power of two, the next power of two is returned.
 pub fn get_suitable_fft_size(sample: usize) -> usize {
     (2.0_f64).powi(((sample as f64).ln() / LOG2) as i32 + 1) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fft_size_for_cheaptrick() {
+        assert_eq!(get_fft_size_for_cheaptrick(16000, 71.0), 1024);
+        assert_eq!(get_fft_size_for_cheaptrick(22050, 71.0), 1024);
+        assert_eq!(get_fft_size_for_cheaptrick(44100, 71.0), 2048);
+        assert_eq!(get_fft_size_for_cheaptrick(48000, 71.0), 2048);
+        for fs in [8000, 16000, 24000, 44100, 48000] {
+            let fft_size = get_fft_size_for_cheaptrick(fs, DEFAULT_F0_FLOOR);
+            assert!(fft_size.is_power_of_two());
+            assert!(fft_size as f64 >= 3.0 * fs as f64 / DEFAULT_F0_FLOOR);
+        }
+    }
+
+    #[test]
+    fn f0_floor_for_cheaptrick() {
+        assert!((get_f0_floor_for_cheaptrick(16000, 1024) - 48000.0 / 1021.0).abs() < 1e-12);
+        for fs in [16000, 24000, 44100, 48000] {
+            let fft_size = get_fft_size_for_cheaptrick(fs, DEFAULT_F0_FLOOR);
+            let f0_floor = get_f0_floor_for_cheaptrick(fs, fft_size);
+            // The FFT size chosen for the default floor supports at least that floor.
+            assert!(f0_floor <= DEFAULT_F0_FLOOR, "fs={fs}: {f0_floor}");
+        }
+    }
+
+    #[test]
+    fn cheaptrick_constructors() {
+        let ct = CheapTrick::new(16000, 1024);
+        assert_eq!(ct.fft_size, 1024);
+        assert_eq!(ct.fs, 16000);
+        assert_eq!(ct.q1, CHEAPTRICK_Q1_DEFAULT);
+        assert!((ct.f0_floor - get_f0_floor_for_cheaptrick(16000, 1024)).abs() < 1e-12);
+
+        let ct = CheapTrick::from_f0_floor(48000, 71.0);
+        assert_eq!(ct.fft_size, 2048);
+        assert_eq!(ct.f0_floor, 71.0);
+    }
+
+    #[test]
+    fn estimator_defaults() {
+        let dio = Dio::new(16000);
+        assert_eq!(dio.f0_floor, DEFAULT_F0_FLOOR);
+        assert_eq!(dio.f0_ceil, DEFAULT_F0_CEIL);
+        assert_eq!(dio.frame_period, DEFAULT_FRAME_PERIOD);
+        assert_eq!(dio.speed, 1);
+        assert_eq!(dio.fs, 16000);
+
+        let harvest = Harvest::new(22050);
+        assert_eq!(harvest.f0_floor, DEFAULT_F0_FLOOR);
+        assert_eq!(harvest.f0_ceil, DEFAULT_F0_CEIL);
+        assert_eq!(harvest.frame_period, DEFAULT_FRAME_PERIOD);
+        assert_eq!(harvest.fs, 22050);
+
+        let yin = Yin::new(44100);
+        assert_eq!(yin.threshold, 0.1);
+        assert_eq!(yin.fs, 44100);
+
+        let d4c = D4C::new(16000, 1024);
+        assert_eq!(d4c.threshold, THRESHOLD);
+        assert_eq!(d4c.fft_size, 1024);
+
+        let synth = Synthesizer::new(5.0, 16000, 1024);
+        assert_eq!(synth.frame_period, 5.0);
+        assert_eq!(synth.fs, 16000);
+        assert_eq!(synth.fft_size, 1024);
+    }
+
+    #[test]
+    fn samples_for_dio() {
+        assert_eq!(get_samples_for_dio(16000, 16000, 5.0), 201);
+        assert_eq!(get_samples_for_dio(16000, 0, 5.0), 1);
+        assert_eq!(get_samples_for_dio(16000, 79, 5.0), 1);
+        assert_eq!(get_samples_for_dio(16000, 80, 5.0), 2);
+        assert_eq!(get_samples_for_dio(48000, 48000, 10.0), 101);
+    }
+
+    #[test]
+    fn suitable_fft_size_follows_world() {
+        assert_eq!(get_suitable_fft_size(1), 2);
+        assert_eq!(get_suitable_fft_size(3), 4);
+        assert_eq!(get_suitable_fft_size(1000), 1024);
+        assert_eq!(get_suitable_fft_size(1024), 2048);
+        assert_eq!(get_suitable_fft_size(1025), 2048);
+    }
 }
